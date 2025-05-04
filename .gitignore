@@ -1,0 +1,33 @@
+# Pliki środowiska
+.env
+venv/
+env/
+.venv/
+
+# Pliki cache Pythona
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pliki instalacyjne
+*.egg-info/
+dist/
+build/
+
+# Katalogi IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Pliki systemu operacyjnego
+.DS_Store
+Thumbs.db
+
+# Pliki projektu
+*.log
+logs/
+data/example_docs/*
+!data/example_docs/sample.txt

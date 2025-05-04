@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic_search"
+version = "0.1.0"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+description = "System do semantycznego wyszukiwania i rekomendacji dokumentów"
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.2",
+    "psycopg>=3.2.7",
+    "pydantic>=2.11",
+    "python-dotenv>=1.1.0",
+    "openai>=1.77.0",
+    "sentence-transformers>=4.1.0",
+    "numpy>=2.2.5",
+    "scikit-learn>=1.6.1",
+    "matplotlib>=3.10.1",
+    "plotly>=6.0.1",
+    "pandas>=2.2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.5",
+    "httpx>=0.28.1",
+    "black>=23.11.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.1",
+]
+
+[tool.setuptools]
+packages = ["semantic_search"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
