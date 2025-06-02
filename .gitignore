@@ -31,3 +31,5 @@ Thumbs.db
 logs/
 data/example_docs/*
 !data/example_docs/sample.txt
+
+uv.lock
