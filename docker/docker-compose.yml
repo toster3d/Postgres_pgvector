@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 17.5 z pgvector
+  db:
+    image: postgres:17.5-bookworm
+    container_name: semantic-docs-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: semantic_docs
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./semantic_doc_search/sql:/docker-entrypoint-initdb.d
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d/init-scripts
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - semantic-net
+
+  # Aplikacja główna
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: semantic-docs-app:latest
+    container_name: semantic-docs-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: semantic_docs
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEFAULT_EMBEDDING_MODEL: ${DEFAULT_MODEL:-all-MiniLM-L6-v2}
+      DEFAULT_SEMANTIC_WEIGHT: ${SEMANTIC_WEIGHT:-0.7}
+    volumes:
+      - ./data:/app/data
+      - ./samples:/app/samples
+    # Dobre dla celów developerskich - podmontowanie całego kodu
+    # - .:/app
+    command: "status"
+    networks:
+      - semantic-net
+
+  # [OPCJONALNIE] Jupyter Notebook z dostępem do aplikacji
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: semantic-docs-app:latest
+    container_name: semantic-docs-jupyter
+    restart: unless-stopped
+    command: >
+      bash -c "pip install --no-cache-dir jupyter jupyterlab matplotlib pandas seaborn &&
+              jupyter lab --ip='0.0.0.0' --port=8888 --no-browser --allow-root --NotebookApp.token='semantic'"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: semantic_docs
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEFAULT_EMBEDDING_MODEL: ${DEFAULT_MODEL:-all-MiniLM-L6-v2}
+    volumes:
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+      - ./samples:/app/samples
+      # Dobre dla celów developerskich - podmontowanie całego kodu
+      - .:/app
+    ports:
+      - "8888:8888"
+    depends_on:
+      - db
+    networks:
+      - semantic-net
+
+  # [OPCJONALNIE] Redis dla cache'owania
+  redis:
+    image: redis:7.2-alpine
+    container_name: semantic-docs-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    networks:
+      - semantic-net
+
+  # [OPCJONALNIE] pgAdmin dla zarządzania bazą danych
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: semantic-docs-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - semantic-net
+
+volumes:
+  postgres-data:
+  redis-data:
+  pgadmin-data:
+
+networks:
+  semantic-net:
+    driver: bridge

@@ -1,62 +1,147 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "semantic_search"
-version = "0.1.0"
-authors = [
-    {name = "Your Name", email = "your.email@example.com"},
-]
-description = "System do semantycznego wyszukiwania i rekomendacji dokumentów"
+name = "semantic-doc-search"
+version = "1.0.0"
+description = "Zaawansowany system semantycznego wyszukiwania dokumentów z PostgreSQL i pgvector"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11,<3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "Semantic Doc Search Team", email = "team@semanticdocs.com"}
+]
+keywords = [
+    "semantic search", 
+    "document search", 
+    "pgvector", 
+    "embeddings", 
+    "nlp", 
+    "postgresql"
+]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database"
 ]
+
+# Główne zależności - uproszczone i kompatybilne z Python 3.12
 dependencies = [
-    "fastapi>=0.115.12",
-    "uvicorn>=0.34.2",
-    "psycopg>=3.2.7",
-    "pydantic>=2.11",
-    "python-dotenv>=1.1.0",
-    "openai>=1.77.0",
-    "sentence-transformers>=4.1.0",
-    "numpy>=2.2.5",
-    "scikit-learn>=1.6.1",
-    "matplotlib>=3.10.1",
-    "plotly>=6.0.1",
-    "pandas>=2.2.3",
+    # Baza danych i ORM
+    "psycopg[binary,pool]>=3.1.0,<3.3.0",
+    "sqlalchemy>=2.0.20,<2.1.0",
+    "pgvector==0.4.1",
+    
+    # Machine Learning i AI - stabilne wersje
+    "sentence-transformers>=4.0.0,<4.2.0",
+    "openai>=1.35.0,<2.0.0",
+    "scikit-learn>=1.3.0,<1.6.0",
+    "torch>=2.1.0,<2.3.0",
+    "transformers>=4.35.0,<4.45.0",
+    
+    # Konfiguracja i walidacja
+    "pydantic>=2.5.0,<3.0.0",
+    "pydantic-settings>=2.0.0,<3.0.0",
+    "python-dotenv>=1.0.0",
+    
+    # Podstawowe narzędzia
+    "click>=8.1.0",
+    "httpx>=0.25.0",
+    "aiofiles>=23.0.0",
+    
+    # Logging
+    "structlog>=23.0.0"
 ]
 
 [project.optional-dependencies]
+# Zależności deweloperskie - uproszczone
 dev = [
-    "pytest>=8.3.5",
-    "httpx>=0.28.1",
-    "black>=23.11.0",
-    "isort>=5.12.0",
-    "mypy>=1.7.1",
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5.0"
 ]
 
-[tool.setuptools]
-packages = ["semantic_search"]
+# Dokumentacja - minimalna
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0"
+]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+# Wszystkie opcjonalne zależności
+all = [
+    "semantic-doc-search[dev,docs]"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/semantic-doc-search"
+Repository = "https://github.com/your-org/semantic-doc-search.git"
+Issues = "https://github.com/your-org/semantic-doc-search/issues"
+
+[project.scripts]
+semantic-docs = "semantic_doc_search.cli.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["semantic_doc_search*"]
+exclude = ["tests*", "docs*"]
+
+[tool.setuptools.package-data]
+semantic_doc_search = ["sql/*.sql", "config/*.yaml", "py.typed"]
+
+# === NARZĘDZIA DEWELOPERSKIE ===
 
 [tool.black]
-line-length = 88
-target-version = ["py313"]
+line-length = 100
+target-version = ['py311', 'py312']
+include = '\.pyi?$'
 
-[tool.isort]
-profile = "black"
-line_length = 88
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+fix = true
+src = ["semantic_doc_search", "tests"]
 
-[tool.mypy]
-python_version = "3.13"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
+[tool.ruff.lint]
+select = [
+    "E", "W",  # Pycodestyle
+    "F",       # Pyflakes
+    "I",       # isort
+    "B",       # flake8-bugbear
+    "SIM",     # flake8-simplify
+    "C4",      # flake8-comprehensions
+]
+
+ignore = [
+    "E501",  # Line too long (handled by black)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+markers = [
+    "slow: marks tests as slow",
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["semantic_doc_search"]
+omit = [
+    "*/tests/*",
+    "*/venv/*",
+    "*/.venv/*",
+]

@@ -1,315 +1,421 @@
+# semantic_doc_search/cli/document_manager.py
 """
-CLI commands for document management
+Moduł CLI do zarządzania dokumentami.
+Obsługuje operacje CRUD na dokumentach z embeddingami.
 """
-import argparse
-import logging
-import sys
-import os
-from typing import List, Optional
 
-from semantic_doc_search.database.connection import test_connection
-from semantic_doc_search.database.documents import (
-    add_document, get_document, update_document, 
-    delete_document, list_documents, search_documents_by_text
-)
-from semantic_doc_search.embeddings.document_processor import (
-    process_document, process_multiple_documents,
-    delete_document_embeddings, list_document_embeddings
-)
+import click
+import json
+from pathlib import Path
+from typing import Optional
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import track, Progress, SpinnerColumn, TextColumn
+from rich.prompt import Confirm
 
-logger = logging.getLogger(__name__)
+from semantic_doc_search.core.database import DatabaseManager
+from semantic_doc_search.core.embeddings import EmbeddingProvider
+from semantic_doc_search.core.models import Document
 
-def setup_logging(verbose: bool):
-    """Configure logging based on verbosity level"""
-    log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+console = Console()
 
-def read_file_content(file_path: str) -> Optional[str]:
-    """Read content from a file"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            return file.read()
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
-        return None
+@click.group()
+def document_group():
+    """📄 Zarządzanie dokumentami w systemie"""
+    pass
 
-def add_document_command(args):
-    """Handle add document command"""
-    # Try to read content from file if path provided
-    content = args.content
-    if args.file and not content:
-        content = read_file_content(args.file)
-        if content is None:
-            print(f"Error: Could not read content from file '{args.file}'")
-            return False
+@document_group.command("add")
+@click.option("--title", "-t", required=True, help="Tytuł dokumentu")
+@click.option("--content", "-c", help="Treść dokumentu (alternatywa dla --file)")
+@click.option("--file", "-f", type=click.Path(exists=True), help="Ścieżka do pliku z treścią")
+@click.option("--source", "-s", help="Źródło dokumentu (opcjonalne)")
+@click.option("--metadata", "-m", help="Metadane w formacie JSON")
+@click.option("--embed/--no-embed", default=True, help="Czy generować embeddings")
+@click.option("--model", default="sentence-transformers", 
+              type=click.Choice(["sentence-transformers", "openai", "sklearn"]),
+              help="Model do generowania embeddingów")
+@click.pass_context
+def add_document(ctx, title: str, content: Optional[str], file: Optional[str], 
+                source: Optional[str], metadata: Optional[str], embed: bool, model: str):
+    """➕ Dodaje nowy dokument do systemu"""
     
-    # Add document to database
-    doc_id = add_document(args.title, content, args.source, args.author)
-    if doc_id is None:
-        print("Error: Failed to add document")
-        return False
+    # Walidacja wejścia
+    if not content and not file:
+        console.print("[red]❌ Musisz podać treść dokumentu (--content) lub plik (--file)[/red]")
+        raise click.Abort()
     
-    # If embeddings should be generated
-    if args.embed:
-        if process_document(doc_id, args.model):
-            print(f"Document added with ID: {doc_id} and embedding generated")
-        else:
-            print(f"Document added with ID: {doc_id}, but embedding generation failed")
-    else:
-        print(f"Document added with ID: {doc_id}")
+    if content and file:
+        console.print("[red]❌ Podaj tylko jeden z parametrów: --content lub --file[/red]")
+        raise click.Abort()
     
-    return True
-
-def show_document_command(args):
-    """Handle show document command"""
-    doc = get_document(args.id)
-    if not doc:
-        print(f"Error: Document with ID {args.id} not found")
-        return False
+    # Odczytanie treści z pliku
+    if file:
+        try:
+            with open(file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            console.print(f"[green]📖 Odczytano treść z pliku: {file}[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ Błąd odczytu pliku: {e}[/red]")
+            raise click.Abort()
     
-    print("\n" + "="*80)
-    print(f"Document ID: {doc['id']}")
-    print(f"Title: {doc['title']}")
-    if doc.get('source'):
-        print(f"Source: {doc['source']}")
-    if doc.get('author'):
-        print(f"Author: {doc['author']}")
-    print(f"Created: {doc['created_at']}")
-    print(f"Updated: {doc['updated_at']}")
-    print("-"*80)
-    print("Content:")
-    print(doc['content'])
-    print("="*80 + "\n")
+    # Parsowanie metadanych
+    parsed_metadata = {}
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]❌ Błędny format JSON w metadanych: {e}[/red]")
+            raise click.Abort()
     
-    # Show embeddings if requested
-    if args.embeddings:
-        embeddings = list_document_embeddings(args.id)
-        if embeddings:
-            print("Embeddings:")
-            for emb in embeddings:
-                print(f"  - ID: {emb['id']}, Model: {emb['model_name']}, Created: {emb['created_at']}")
-        else:
-            print("No embeddings found for this document")
+    # Dodanie źródła do metadanych
+    if source:
+        parsed_metadata["source"] = source
     
-    return True
-
-def update_document_command(args):
-    """Handle update document command"""
-    update_fields = {}
+    db = ctx.obj['db']
     
-    if args.title:
-        update_fields['title'] = args.title
-    
-    # Update content from file or argument
-    if args.file:
-        content = read_file_content(args.file)
-        if content is None:
-            print(f"Error: Could not read content from file '{args.file}'")
-            return False
-        update_fields['content'] = content
-    elif args.content:
-        update_fields['content'] = args.content
-    
-    if args.source:
-        update_fields['source'] = args.source
-    
-    if args.author:
-        update_fields['author'] = args.author
-    
-    if not update_fields:
-        print("Error: No fields specified for update")
-        return False
-    
-    # Update document
-    if update_document(args.id, **update_fields):
-        print(f"Document {args.id} updated successfully")
-        
-        # Update embeddings if requested
-        if args.regenerate_embeddings:
-            if delete_document_embeddings(args.id):
-                print("Old embeddings deleted")
+    with console.status("[bold green]Dodawanie dokumentu..."):
+        try:
+            # Utworzenie dokumentu
+            document = Document(
+                title=title,
+                content=content,
+                metadata=parsed_metadata
+            )
             
-            if process_document(args.id, args.model):
-                print("New embeddings generated successfully")
-            else:
-                print("Failed to generate new embeddings")
-        
-        return True
-    else:
-        print(f"Error: Failed to update document {args.id}")
-        return False
+            # Zapisanie w bazie danych
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO documents (title, content, search_vector, metadata, created_at)
+                        VALUES (%s, %s, to_tsvector('polish', %s), %s, CURRENT_TIMESTAMP)
+                        RETURNING id
+                    """, (document.title, document.content, document.content, json.dumps(document.metadata)))
+                    
+                    document_id = cur.fetchone()[0]
+                    conn.commit()
+            
+            console.print(f"[green]✅ Dokument dodany z ID: {document_id}[/green]")
+            
+            # Generowanie embeddingów jeśli wymagane
+            if embed:
+                with console.status(f"[bold blue]Generowanie embeddingów ({model})..."):
+                    try:
+                        provider = EmbeddingProvider()
+                        embeddings = provider.encode(content, provider_name=model)
+                        
+                        # Zapisanie embeddingów
+                        with db.get_connection() as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    INSERT INTO document_embeddings (document_id, embedding, model_name)
+                                    VALUES (%s, %s, %s)
+                                """, (document_id, embeddings, model))
+                                conn.commit()
+                        
+                        console.print(f"[green]🧠 Embeddings wygenerowane ({len(embeddings)} wymiarów)[/green]")
+                        
+                    except Exception as e:
+                        console.print(f"[yellow]⚠️ Błąd generowania embeddingów: {e}[/yellow]")
+            
+            # Wyświetlenie podsumowania
+            summary_table = Table(title=f"📄 Dodany Dokument (ID: {document_id})")
+            summary_table.add_column("Atrybut", style="cyan")
+            summary_table.add_column("Wartość", style="green")
+            
+            summary_table.add_row("Tytuł", title)
+            summary_table.add_row("Długość treści", f"{len(content)} znaków")
+            summary_table.add_row("Embeddings", "✅ Tak" if embed else "❌ Nie")
+            if source:
+                summary_table.add_row("Źródło", source)
+            
+            console.print(summary_table)
+            
+        except Exception as e:
+            console.print(f"[red]❌ Błąd dodawania dokumentu: {e}[/red]")
+            raise click.Abort()
 
-def delete_document_command(args):
-    """Handle delete document command"""
-    # Delete embeddings first (due to foreign key constraints)
-    if not args.keep_embeddings:
-        delete_document_embeddings(args.id)
+@document_group.command("show")
+@click.argument("document_id", type=int)
+@click.option("--show-content/--no-content", default=False, help="Wyświetl pełną treść")
+@click.option("--show-embeddings/--no-embeddings", default=False, help="Wyświetl informacje o embeddingach")
+@click.pass_context
+def show_document(ctx, document_id: int, show_content: bool, show_embeddings: bool):
+    """👁️ Wyświetla szczegóły dokumentu"""
     
-    # Delete document
-    if delete_document(args.id):
-        print(f"Document {args.id} deleted successfully")
-        return True
-    else:
-        print(f"Error: Failed to delete document {args.id}")
-        return False
+    db = ctx.obj['db']
+    
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Pobranie dokumentu
+                cur.execute("""
+                    SELECT id, title, content, metadata, created_at, updated_at
+                    FROM documents WHERE id = %s
+                """, (document_id,))
+                
+                row = cur.fetchone()
+                if not row:
+                    console.print(f"[red]❌ Nie znaleziono dokumentu o ID: {document_id}[/red]")
+                    raise click.Abort()
+                
+                doc_id, title, content, metadata, created_at, updated_at = row
+                
+                # Podstawowe informacje
+                info_table = Table(title=f"📄 Dokument ID: {doc_id}")
+                info_table.add_column("Atrybut", style="cyan")
+                info_table.add_column("Wartość", style="green")
+                
+                info_table.add_row("Tytuł", title)
+                info_table.add_row("Długość treści", f"{len(content)} znaków")
+                info_table.add_row("Utworzony", str(created_at))
+                if updated_at != created_at:
+                    info_table.add_row("Zaktualizowany", str(updated_at))
+                
+                if metadata:
+                    info_table.add_row("Metadane", json.dumps(metadata, indent=2, ensure_ascii=False))
+                
+                console.print(info_table)
+                
+                # Pełna treść jeśli wymagana
+                if show_content:
+                    content_panel = Panel(
+                        content[:1000] + ("..." if len(content) > 1000 else ""),
+                        title="📖 Treść dokumentu",
+                        border_style="blue"
+                    )
+                    console.print(content_panel)
+                
+                # Informacje o embeddingach
+                if show_embeddings:
+                    cur.execute("""
+                        SELECT model_name, array_length(embedding, 1) as dimension
+                        FROM document_embeddings WHERE document_id = %s
+                    """, (document_id,))
+                    
+                    embeddings_data = cur.fetchall()
+                    
+                    if embeddings_data:
+                        emb_table = Table(title="🧠 Embeddings")
+                        emb_table.add_column("Model", style="cyan")
+                        emb_table.add_column("Wymiary", style="green")
+                        
+                        for model_name, dimension in embeddings_data:
+                            emb_table.add_row(model_name, str(dimension))
+                        
+                        console.print(emb_table)
+                    else:
+                        console.print("[yellow]⚠️ Brak embeddingów dla tego dokumentu[/yellow]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Błąd pobierania dokumentu: {e}[/red]")
 
-def list_documents_command(args):
-    """Handle list documents command"""
-    documents = list_documents(args.limit, args.offset)
+@document_group.command("list")
+@click.option("--limit", "-l", default=10, help="Liczba dokumentów do wyświetlenia")
+@click.option("--offset", "-o", default=0, help="Przesunięcie (do paginacji)")
+@click.option("--source", "-s", help="Filtr według źródła")
+@click.pass_context
+def list_documents(ctx, limit: int, offset: int, source: Optional[str]):
+    """📋 Listuje dokumenty w systemie"""
     
-    if not documents:
-        print("No documents found")
-        return True
+    db = ctx.obj['db']
     
-    print(f"\nFound {len(documents)} documents:\n")
-    for doc in documents:
-        print(f"ID: {doc['id']}, Title: {doc['title']}")
-        if doc.get('source'):
-            print(f"  Source: {doc['source']}")
-        if doc.get('author'):
-            print(f"  Author: {doc['author']}")
-        print(f"  Created: {doc['created_at']}")
-        print("")
-    
-    return True
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Przygotowanie zapytania z filtrem
+                where_clause = ""
+                params = []
+                
+                if source:
+                    where_clause = "WHERE metadata->>'source' = %s"
+                    params.append(source)
+                
+                # Pobranie dokumentów
+                query = f"""
+                    SELECT id, title, 
+                           SUBSTRING(content FROM 1 FOR 100) as preview,
+                           metadata->>'source' as source,
+                           created_at
+                    FROM documents 
+                    {where_clause}
+                    ORDER BY created_at DESC 
+                    LIMIT %s OFFSET %s
+                """
+                params.extend([limit, offset])
+                
+                cur.execute(query, params)
+                documents = cur.fetchall()
+                
+                # Liczba wszystkich dokumentów
+                count_query = f"SELECT COUNT(*) FROM documents {where_clause}"
+                cur.execute(count_query, params[:-2] if source else [])
+                total_count = cur.fetchone()[0]
+                
+                if not documents:
+                    console.print("[yellow]📭 Brak dokumentów do wyświetlenia[/yellow]")
+                    return
+                
+                # Utworzenie tabeli
+                table = Table(title=f"📋 Dokumenty ({offset + 1}-{offset + len(documents)} z {total_count})")
+                table.add_column("ID", style="cyan", width=6)
+                table.add_column("Tytuł", style="green", width=30)
+                table.add_column("Podgląd", style="dim", width=40)
+                table.add_column("Źródło", style="yellow", width=15)
+                table.add_column("Data", style="blue", width=12)
+                
+                for doc_id, title, preview, doc_source, created_at in documents:
+                    table.add_row(
+                        str(doc_id),
+                        title[:30] + "..." if len(title) > 30 else title,
+                        preview + "..." if preview else "",
+                        doc_source or "-",
+                        created_at.strftime("%Y-%m-%d")
+                    )
+                
+                console.print(table)
+                
+                # Informacja o paginacji
+                if total_count > offset + limit:
+                    console.print(f"\n[dim]💡 Użyj --offset {offset + limit} aby zobaczyć kolejne dokumenty[/dim]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Błąd listowania dokumentów: {e}[/red]")
 
-def embeddings_command(args):
-    """Handle embeddings command"""
-    if args.list:
-        embeddings = list_document_embeddings(args.id)
-        if not embeddings:
-            print(f"No embeddings found for document {args.id}")
-        else:
-            print(f"Embeddings for document {args.id}:")
-            for emb in embeddings:
-                print(f"  - ID: {emb['id']}, Model: {emb['model_name']}, Created: {emb['created_at']}")
+@document_group.command("update")
+@click.argument("document_id", type=int)
+@click.option("--title", "-t", help="Nowy tytuł dokumentu")
+@click.option("--content", "-c", help="Nowa treść dokumentu")
+@click.option("--file", "-f", type=click.Path(exists=True), help="Plik z nową treścią")
+@click.option("--metadata", "-m", help="Nowe metadane w formacie JSON")
+@click.option("--regenerate-embeddings/--keep-embeddings", default=False, 
+              help="Czy regenerować embeddings po aktualizacji")
+@click.pass_context
+def update_document(ctx, document_id: int, title: Optional[str], content: Optional[str], 
+                   file: Optional[str], metadata: Optional[str], regenerate_embeddings: bool):
+    """✏️ Aktualizuje istniejący dokument"""
     
-    if args.generate:
-        if process_document(args.id, args.model):
-            print(f"Embeddings generated for document {args.id} using model {args.model}")
-        else:
-            print(f"Failed to generate embeddings for document {args.id}")
+    if content and file:
+        console.print("[red]❌ Podaj tylko jeden z parametrów: --content lub --file[/red]")
+        raise click.Abort()
     
-    if args.delete:
-        if delete_document_embeddings(args.id):
-            print(f"Embeddings deleted for document {args.id}")
-        else:
-            print(f"No embeddings found for document {args.id}")
+    # Odczytanie treści z pliku
+    if file:
+        try:
+            with open(file, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            console.print(f"[red]❌ Błąd odczytu pliku: {e}[/red]")
+            raise click.Abort()
     
-    return True
+    # Parsowanie metadanych
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]❌ Błędny format JSON w metadanych: {e}[/red]")
+            raise click.Abort()
+    
+    db = ctx.obj['db']
+    
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Sprawdzenie czy dokument istnieje
+                cur.execute("SELECT id, title, content FROM documents WHERE id = %s", (document_id,))
+                row = cur.fetchone()
+                if not row:
+                    console.print(f"[red]❌ Nie znaleziono dokumentu o ID: {document_id}[/red]")
+                    raise click.Abort()
+                
+                old_id, old_title, old_content = row
+                
+                # Przygotowanie zapytania aktualizacji
+                updates = []
+                params = []
+                
+                if title:
+                    updates.append("title = %s")
+                    params.append(title)
+                
+                if content:
+                    updates.append("content = %s")
+                    params.append(content)
+                    updates.append("search_vector = to_tsvector('polish', %s)")
+                    params.append(content)
+                
+                if parsed_metadata is not None:
+                    updates.append("metadata = %s")
+                    params.append(json.dumps(parsed_metadata))
+                
+                if updates:
+                    updates.append("updated_at = CURRENT_TIMESTAMP")
+                    params.append(document_id)
+                    
+                    query = f"UPDATE documents SET {', '.join(updates)} WHERE id = %s"
+                    cur.execute(query, params)
+                    conn.commit()
+                    
+                    console.print(f"[green]✅ Dokument {document_id} został zaktualizowany[/green]")
+                
+                # Regeneracja embeddingów jeśli wymagana
+                if regenerate_embeddings and content:
+                    with console.status("[bold blue]Regenerowanie embeddingów..."):
+                        # Usunięcie starych embeddingów
+                        cur.execute("DELETE FROM document_embeddings WHERE document_id = %s", (document_id,))
+                        
+                        # Wygenerowanie nowych
+                        provider = EmbeddingProvider()
+                        embeddings = provider.encode(content, provider_name="sentence-transformers")
+                        
+                        cur.execute("""
+                            INSERT INTO document_embeddings (document_id, embedding, model_name)
+                            VALUES (%s, %s, %s)
+                        """, (document_id, embeddings, "sentence-transformers"))
+                        
+                        conn.commit()
+                        console.print("[green]🧠 Embeddings zostały zregenerowane[/green]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Błąd aktualizacji dokumentu: {e}[/red]")
 
-def process_documents_command(args):
-    """Handle batch processing of documents"""
-    doc_ids = args.ids
-    results = process_multiple_documents(doc_ids, args.model)
+@document_group.command("delete")
+@click.argument("document_id", type=int)
+@click.option("--force", "-f", is_flag=True, help="Usuń bez potwierdzenia")
+@click.pass_context
+def delete_document(ctx, document_id: int, force: bool):
+    """🗑️ Usuwa dokument z systemu"""
     
-    success = [doc_id for doc_id, success in results.items() if success]
-    failed = [doc_id for doc_id, success in results.items() if not success]
+    db = ctx.obj['db']
     
-    if success:
-        print(f"Successfully processed {len(success)} documents: {', '.join(map(str, success))}")
-    
-    if failed:
-        print(f"Failed to process {len(failed)} documents: {', '.join(map(str, failed))}")
-    
-    return len(failed) == 0
-
-def main():
-    """Main CLI entry point"""
-    parser = argparse.ArgumentParser(description="Document Management CLI")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--test-connection", action="store_true", help="Test database connection")
-    
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-    
-    # Add document command
-    add_parser = subparsers.add_parser("add", help="Add a new document")
-    add_parser.add_argument("--title", "-t", required=True, help="Document title")
-    add_parser.add_argument("--content", "-c", help="Document content")
-    add_parser.add_argument("--file", "-f", help="Path to file containing document content")
-    add_parser.add_argument("--source", "-s", help="Document source")
-    add_parser.add_argument("--author", "-a", help="Document author")
-    add_parser.add_argument("--embed", "-e", action="store_true", help="Generate embeddings for document")
-    add_parser.add_argument("--model", "-m", default="sklearn", help="Embedding model to use")
-    
-    # Show document command
-    show_parser = subparsers.add_parser("show", help="Show document details")
-    show_parser.add_argument("id", type=int, help="Document ID")
-    show_parser.add_argument("--embeddings", "-e", action="store_true", help="Show document embeddings")
-    
-    # Update document command
-    update_parser = subparsers.add_parser("update", help="Update document")
-    update_parser.add_argument("id", type=int, help="Document ID")
-    update_parser.add_argument("--title", "-t", help="Document title")
-    update_parser.add_argument("--content", "-c", help="Document content")
-    update_parser.add_argument("--file", "-f", help="Path to file containing document content")
-    update_parser.add_argument("--source", "-s", help="Document source")
-    update_parser.add_argument("--author", "-a", help="Document author")
-    update_parser.add_argument("--regenerate-embeddings", "-r", action="store_true", 
-                               help="Regenerate embeddings after update")
-    update_parser.add_argument("--model", "-m", default="sklearn", help="Embedding model to use")
-    
-    # Delete document command
-    delete_parser = subparsers.add_parser("delete", help="Delete document")
-    delete_parser.add_argument("id", type=int, help="Document ID")
-    delete_parser.add_argument("--keep-embeddings", "-k", action="store_true", 
-                              help="Keep embeddings (not recommended, may cause foreign key errors)")
-    
-    # List documents command
-    list_parser = subparsers.add_parser("list", help="List documents")
-    list_parser.add_argument("--limit", "-l", type=int, default=10, help="Maximum number of documents to list")
-    list_parser.add_argument("--offset", "-o", type=int, default=0, help="Offset for pagination")
-    
-    # Embeddings command
-    embeddings_parser = subparsers.add_parser("embeddings", help="Manage document embeddings")
-    embeddings_parser.add_argument("id", type=int, help="Document ID")
-    embeddings_parser.add_argument("--list", "-l", action="store_true", help="List embeddings")
-    embeddings_parser.add_argument("--generate", "-g", action="store_true", help="Generate embeddings")
-    embeddings_parser.add_argument("--delete", "-d", action="store_true", help="Delete embeddings")
-    embeddings_parser.add_argument("--model", "-m", default="sklearn", help="Embedding model to use")
-    
-    # Process documents in batch
-    process_parser = subparsers.add_parser("process", help="Process multiple documents")
-    process_parser.add_argument("ids", type=int, nargs="+", help="Document IDs to process")
-    process_parser.add_argument("--model", "-m", default="sklearn", help="Embedding model to use")
-    
-    args = parser.parse_args()
-    
-    # Set up logging
-    setup_logging(args.verbose)
-    
-    # Test connection if requested
-    if args.test_connection:
-        if test_connection():
-            print("Database connection successful")
-            return 0
-        else:
-            print("Database connection failed")
-            return 1
-    
-    # Execute the requested command
-    if args.command == "add":
-        success = add_document_command(args)
-    elif args.command == "show":
-        success = show_document_command(args)
-    elif args.command == "update":
-        success = update_document_command(args)
-    elif args.command == "delete":
-        success = delete_document_command(args)
-    elif args.command == "list":
-        success = list_documents_command(args)
-    elif args.command == "embeddings":
-        success = embeddings_command(args)
-    elif args.command == "process":
-        success = process_documents_command(args)
-    else:
-        parser.print_help()
-        return 1
-    
-    return 0 if success else 1
-
-if __name__ == "__main__":
-    sys.exit(main()) 
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Sprawdzenie czy dokument istnieje
+                cur.execute("SELECT title FROM documents WHERE id = %s", (document_id,))
+                row = cur.fetchone()
+                if not row:
+                    console.print(f"[red]❌ Nie znaleziono dokumentu o ID: {document_id}[/red]")
+                    raise click.Abort()
+                
+                title = row[0]
+                
+                # Potwierdzenie usunięcia
+                if not force:
+                    if not Confirm.ask(f"Czy na pewno chcesz usunąć dokument '{title}' (ID: {document_id})?"):
+                        console.print("[yellow]❌ Operacja anulowana[/yellow]")
+                        return
+                
+                # Usunięcie dokumentu (embeddings zostaną usunięte przez CASCADE)
+                cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+                deleted_count = cur.rowcount
+                conn.commit()
+                
+                if deleted_count > 0:
+                    console.print(f"[green]✅ Dokument '{title}' został usunięty[/green]")
+                else:
+                    console.print("[yellow]⚠️ Dokument nie został usunięty[/yellow]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Błąd usuwania dokumentu: {e}[/red]")
