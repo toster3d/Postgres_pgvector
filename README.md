@@ -1,344 +1,366 @@
-🔍 Semantic Document Search
-Python 3.13
-PostgreSQL 17
-pgvector 0.8.0
-License: MIT
+🔍 Semantyczne Wyszukiwanie Dokumentów
+System do semantycznego wyszukiwania i rekomendacji dokumentów z wykorzystaniem PostgreSQL i pgvector. Umożliwia przechowywanie dokumentów tekstowych, generowanie wektorowych reprezentacji ich treści (embeddings) oraz wyszukiwanie podobnych dokumentów na podstawie znaczenia semantycznego.
 
-Zaawansowany system semantycznego wyszukiwania i rekomendacji dokumentów wykorzystujący PostgreSQL 17 z rozszerzeniem pgvector 0.8.0. System oferuje trzy rodzaje wyszukiwania: pełnotekstowe, semantyczne oraz hybrydowe, łącząc najlepsze cechy tradycyjnych baz danych z nowoczesnymi technikami AI.
+✨ Funkcjonalności
+📄 Przechowywanie dokumentów tekstowych w bazie PostgreSQL
 
-✨ Główne Funkcjonalności
-🧠 Wyszukiwanie semantyczne - wykorzystanie embeddingów AI do rozumienia znaczenia
+🧠 Generowanie embeddings dla dokumentów (Sentence Transformers, OpenAI, sklearn)
 
-📝 Wyszukiwanie pełnotekstowe - PostgreSQL full-text search z konfiguracją polską
+🔍 Semantyczne wyszukiwanie podobnych dokumentów
 
-🔄 Wyszukiwanie hybrydowe - łączenie semantycznego i pełnotekstowego z wagami
+🔄 Hybrydowe wyszukiwanie (łączące full-text search z wyszukiwaniem wektorowym)
 
-💡 System rekomendacji - znajdowanie podobnych dokumentów
+💡 System rekomendacji podobnych dokumentów
 
-🏗️ Wielomodelowe embeddings - Sentence Transformers, OpenAI, scikit-learn
+🖥️ Nowoczesny CLI z kolorowym interfejsem
 
-🎨 Kolorowy CLI - intuitive interfejs z Rich i Click
+📊 Eksport wyników do JSON/CSV
 
-🐳 Docker Ready - kompletne środowisko z docker-compose
+⚡ Wydajne indeksy wektorowe (IVFFlat, HNSW)
 
-⚡ Optymalizacje wydajności - indeksy IVFFlat, connection pooling
+📋 Wymagania
+Python 3.10+
 
-🚀 Szybki Start
-1. Wymagania
-Python 3.13.3+
+PostgreSQL 17.5+
 
-PostgreSQL 17.5+ z rozszerzeniem pgvector 0.8.0
+Rozszerzenie pgvector 0.8.0+
 
-Docker i Docker Compose (opcjonalnie)
-
-2. Instalacja z Docker (Rekomendowana)
+🚀 Instalacja
+1. Instalacja PostgreSQL z rozszerzeniem pgvector
+Ubuntu/Debian
 bash
-# Klonowanie repozytorium
-git clone https://github.com/your-org/semantic-doc-search.git
-cd semantic-doc-search
+# Zainstaluj PostgreSQL
+sudo apt update
+sudo apt install postgresql postgresql-contrib postgresql-server-dev-all
 
-# Konfiguracja środowiska
-cp .env.example .env
-# Edytuj .env zgodnie z potrzebami
-
-# Uruchomienie kompletnego środowiska
-docker-compose up -d
-
-# Sprawdzenie statusu
-docker-compose ps
-3. Instalacja lokalna z uv
-bash
-# Instalacja uv (najszybszy menedżer pakietów Python)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Setup projektu
-git clone https://github.com/your-org/semantic-doc-search.git
-cd semantic-doc-search
-
-# Utworzenie środowiska wirtualnego i instalacja
-uv venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# Instalacja pakietu z wszystkimi zależnościami
-uv sync --extra all
-
-# Inicjalizacja systemu
-semantic-docs init
-4. Konfiguracja bazy danych
-PostgreSQL z pgvector (lokalnie)
-bash
-# Ubuntu/Debian
-sudo apt install postgresql postgresql-contrib
-
-# Instalacja pgvector
+# Zainstaluj pgvector
 git clone https://github.com/pgvector/pgvector.git
 cd pgvector
 make
 sudo make install
-
-# Inicjalizacja bazy danych
-sudo -u postgres psql -f semantic_doc_search/sql/init_db.sql
-sudo -u postgres psql -d semantic_docs -f semantic_doc_search/sql/create_tables.sql
-sudo -u postgres psql -d semantic_docs -f semantic_doc_search/sql/functions.sql
-📋 Użytkowanie
-Zarządzanie dokumentami
+macOS (Homebrew)
 bash
-# Dodanie dokumentu z pliku
-semantic-docs docs add --title "Wprowadzenie do AI" --file docs/ai_intro.txt --embed
+# Zainstaluj PostgreSQL
+brew install postgresql
 
-# Dodanie dokumentu z treścią bezpośrednio
-semantic-docs docs add --title "Podstawy ML" --content "Machine Learning to..." --embed
+# Zainstaluj pgvector
+brew install pgvector
+Windows
+Pobierz PostgreSQL z oficjalnej strony i zainstaluj pgvector zgodnie z instrukcjami.
 
-# Dodanie z metadanymi
-semantic-docs docs add --title "Raport 2024" --file report.txt \
-  --metadata '{"author": "Jan Kowalski", "category": "financial"}' \
-  --source "Dział finansowy" --embed
-
-# Wyświetlenie dokumentu
-semantic-docs docs show 1 --show-content --show-embeddings
-
-# Lista dokumentów z paginacją
-semantic-docs docs list --limit 20 --source "tutorial"
-
-# Aktualizacja dokumentu
-semantic-docs docs update 1 --title "Nowy tytuł" --regenerate-embeddings
-
-# Usunięcie dokumentu
-semantic-docs docs delete 1 --force
-Wyszukiwanie dokumentów
+2. Inicjalizacja bazy danych
 bash
-# Wyszukiwanie pełnotekstowe
-semantic-docs search text "sztuczna inteligencja" --limit 10
+# Uruchom PostgreSQL
+sudo systemctl start postgresql  # Linux
+brew services start postgresql   # macOS
 
-# Wyszukiwanie semantyczne
-semantic-docs search semantic "Jak działa machine learning?" \
-  --model sentence-transformers --min-score 0.6
-
-# Wyszukiwanie hybrydowe (najlepsze wyniki)
-semantic-docs search hybrid "AI w medycynie" \
-  --semantic-weight 0.8 --limit 15 --show-content
-
-# Rekomendacje dla dokumentu
-semantic-docs search recommend 5 --limit 10
-
-# Interaktywne wyszukiwanie
-semantic-docs search interactive --search-type hybrid
-Eksport wyników
+# Inicjalizuj bazę danych
+psql -U postgres -f sql/init_db.sql
+psql -U postgres -d semantic_docs -f sql/create_tables.sql
+3. Instalacja pakietu Python
 bash
-# Eksport do JSON
-semantic-docs search semantic "AI" --export json --output results.json
+# Utwórz wirtualne środowisko
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
 
-# Eksport do CSV
-semantic-docs search hybrid "machine learning" --export csv --output ml_results.csv
-Administracja systemu
+# Zainstaluj pakiet
+pip install -e .
+
+# Lub zainstaluj wymagania ręcznie
+pip install -r requirements.txt
+4. Konfiguracja
 bash
-# Status systemu
-semantic-docs status
+# Skopiuj przykładową konfigurację
+cp .env.example .env
 
-# Sprawdzenie kondycji
-semantic-docs health
-
-# Inicjalizacja/reinstalacja
-semantic-docs init
-🎯 Modele Embeddings
-System obsługuje różne modele embeddings:
-
-Sentence Transformers (Lokalnie)
-bash
-# Szybki model wielojęzyczny (384 wymiary)
---model sentence-transformers
-
-# Instalacja dodatkowych modeli
-semantic-docs models install all-mpnet-base-v2
-OpenAI (Chmura)
-bash
-# Konfiguracja w .env
-OPENAI_API_KEY=sk-your-key-here
-
-# Użycie
---model openai
-scikit-learn (Demo)
-bash
-# Model TF-IDF do testów
---model sklearn
-🏗️ Architektura
-text
-semantic_doc_search/
-├── cli/                 # Interfejs wiersza poleceń
-│   ├── main.py         # Główne komendy CLI
-│   ├── document_manager.py  # Zarządzanie dokumentami
-│   └── search_commands.py   # Wyszukiwanie
-├── core/               # Logika biznesowa
-│   ├── database.py     # Manager bazy danych
-│   ├── models.py       # Modele SQLAlchemy
-│   ├── embeddings.py   # Provider embeddingów
-│   └── search.py       # Silniki wyszukiwania
-├── config/             # Konfiguracja systemu
-│   └── settings.py     # Ustawienia Pydantic
-└── sql/               # Skrypty PostgreSQL
-    ├── init_db.sql     # Inicjalizacja bazy
-    ├── create_tables.sql    # Schemat tabel
-    └── functions.sql   # Funkcje wyszukiwania
-🔧 Konfiguracja
-Zmienne środowiskowe
-Podstawowe ustawienia w pliku .env:
+# Edytuj konfigurację
+nano .env
+Przykładowa konfiguracja:
 
 text
-# Baza danych
-DB_HOST=localhost
 DB_NAME=semantic_docs
 DB_USER=postgres
 DB_PASSWORD=postgres
+DB_HOST=localhost
+DB_PORT=5432
 
-# AI modele
-DEFAULT_EMBEDDING_MODEL=all-MiniLM-L6-v2
-OPENAI_API_KEY=sk-your-key-here
-
-# Wyszukiwanie
-DEFAULT_SEMANTIC_WEIGHT=0.7
-DEFAULT_MIN_SCORE=0.3
-Dostrajanie wydajności
+# Opcjonalnie dla OpenAI
+OPENAI_API_KEY=your_api_key_here
+5. Inicjalizacja systemu
 bash
-# Optymalizacja indeksów dla dużych zbiorów
-semantic-docs admin rebuild-indexes --lists 1000
-
-# Konfiguracja connection pool
-DB_MAX_POOL_SIZE=50
-DB_MIN_POOL_SIZE=10
-📊 Przykłady Zastosowania
-1. Baza Wiedzy Firmy
+# Zainicjalizuj bazę danych i sprawdź status
+semantic-docs init
+semantic-docs status
+🎯 Użycie
+Zarządzanie dokumentami
+Dodawanie dokumentu z treścią
 bash
-# Dodanie dokumentów firmowych
-semantic-docs docs add --title "Polityka HR" --file hr_policy.pdf \
-  --metadata '{"department": "hr", "type": "policy"}' --embed
+semantic-docs docs add \
+  --title "Wprowadzenie do AI" \
+  --content "Sztuczna inteligencja to dziedzina informatyki..." \
+  --embed
+Dodawanie dokumentu z pliku
+bash
+semantic-docs docs add \
+  --title "Raport roczny 2024" \
+  --file "./documents/raport_2024.txt" \
+  --source "Dział finansowy" \
+  --embed \
+  --model all-mpnet-base-v2
+Wyświetlanie dokumentu
+bash
+semantic-docs docs show 1 --show-content --show-embeddings
+Aktualizacja dokumentu
+bash
+semantic-docs docs update 1 \
+  --title "Nowy tytuł" \
+  --regenerate-embeddings
+Usunięcie dokumentu
+bash
+semantic-docs docs delete 1 --force
+Lista dokumentów
+bash
+semantic-docs docs list --limit 20 --format table
+Wyszukiwanie dokumentów
+Wyszukiwanie pełnotekstowe
+bash
+semantic-docs search text "sztuczna inteligencja" --show-content
+Wyszukiwanie semantyczne
+bash
+semantic-docs search semantic \
+  "Jaka jest natura świadomości?" \
+  --model all-mpnet-base-v2 \
+  --show-content
+Wyszukiwanie hybrydowe
+bash
+semantic-docs search hybrid \
+  "machine learning i deep learning" \
+  --semantic-weight 0.7 \
+  --show-content
+Rekomendacje podobnych dokumentów
+bash
+semantic-docs search recommend 1 --limit 5 --show-content
+Eksport wyników
+bash
+# Eksport do JSON
+semantic-docs search semantic "AI ethics" \
+  --export json \
+  --output results.json
+
+# Eksport do CSV
+semantic-docs search hybrid "blockchain technology" \
+  --export csv \
+  --output blockchain_results.csv
+🧠 Modele embeddings
+System obsługuje różne modele do generowania embeddings:
+
+Sentence Transformers (domyślnie)
+bash
+# Szybki model angielski (384 wymiary)
+semantic-docs docs add --title "Document" --content "Content" \
+  --embed --model all-MiniLM-L6-v2
+
+# Wysokiej jakości model angielski (768 wymiarów)
+semantic-docs docs add --title "Document" --content "Content" \
+  --embed --model all-mpnet-base-v2
+
+# Model wielojęzyczny (polski obsługiwany)
+semantic-docs docs add --title "Dokument" --content "Treść po polsku" \
+  --embed --model paraphrase-multilingual-mpnet-base-v2
+OpenAI (wymaga klucza API)
+bash
+semantic-docs docs add --title "Document" --content "Content" \
+  --embed --model text-embedding-3-small
+Scikit-learn (demonstracyjny)
+bash
+semantic-docs docs add --title "Document" --content "Content" \
+  --embed --model tfidf-vectorizer
+📊 Zarządzanie indeksami
+bash
+# Utwórz indeksy wektorowe dla lepszej wydajności
+semantic-docs create-indexes
+
+# Wymuś ponowne utworzenie indeksów
+semantic-docs create-indexes --force
+🔧 Przykłady użycia
+Scenariusz 1: Baza artykułów naukowych
+bash
+# Dodaj artykuły
+semantic-docs docs add \
+  --title "Teoria względności Einsteina" \
+  --file articles/relativity.txt \
+  --source "Physics Journal" \
+  --embed
+
+semantic-docs docs add \
+  --title "Mechanika kwantowa - wprowadzenie" \
+  --file articles/quantum.txt \
+  --source "Science Magazine" \
+  --embed
+
+# Znajdź podobne artykuły
+semantic-docs search semantic \
+  "Związek między grawitacją a mechaniką kwantową" \
+  --show-content \
+  --export json \
+  --output physics_search.json
+Scenariusz 2: Dokumenty firmowe
+bash
+# Dodaj dokumenty
+semantic-docs docs add \
+  --title "Raport finansowy Q3 2024" \
+  --file reports/q3_2024.txt \
+  --source "Dział finansowy" \
+  --metadata '{"quarter": "Q3", "year": 2024, "department": "finance"}' \
+  --embed
+
+semantic-docs docs add \
+  --title "Strategia rozwoju 2025" \
+  --file docs/strategy_2025.txt \
+  --source "Zarząd" \
+  --metadata '{"type": "strategy", "year": 2025}' \
+  --embed
 
 # Wyszukiwanie hybrydowe
-semantic-docs search hybrid "urlop macierzyński" --semantic-weight 0.8
-2. Analiza Dokumentów Naukowych
+semantic-docs search hybrid \
+  "prognozy finansowe na przyszły rok" \
+  --semantic-weight 0.6 \
+  --show-content
+
+# Eksportuj wyniki strategiczne
+semantic-docs search semantic "cele strategiczne rozwoju" \
+  --export csv \
+  --output strategy_matches.csv
+Scenariusz 3: Dokumentacja techniczna
 bash
-# Batch import z arXiv
-semantic-docs batch import --source arxiv --category "cs.AI" --limit 1000
+# Dodaj dokumentację
+for file in docs/technical/*.md; do
+  semantic-docs docs add \
+    --title "$(basename "$file" .md)" \
+    --file "$file" \
+    --source "Technical Documentation" \
+    --embed \
+    --model all-mpnet-base-v2
+done
 
-# Wyszukiwanie semantyczne
-semantic-docs search semantic "attention mechanisms in transformers" \
-  --model openai --min-score 0.7
-3. System FAQ
+# Znajdź dokumenty podobne do konkretnego
+semantic-docs search recommend 5 --limit 10 --show-content
+📈 Monitorowanie i diagnostyka
 bash
-# Dodanie FAQ
-semantic-docs docs add --title "Jak zresetować hasło?" \
-  --content "Proces resetowania hasła..." --source "FAQ" --embed
+# Sprawdź status systemu
+semantic-docs status
 
-# Wyszukiwanie pytań użytkowników
-semantic-docs search semantic "nie mogę się zalogować" --limit 5
-🧪 Testowanie
+# Wyświetl historię wyszukiwań
+semantic-docs history --limit 20
+
+# Sprawdź wersję
+semantic-docs version
+⚙️ Konfiguracja zaawansowana
+Dostrajanie wydajności
+text
+# W pliku .env
+EMBEDDING_BATCH_SIZE=64        # Większe batche dla GPU
+DB_MAX_POOL_SIZE=50           # Więcej połączeń dla dużego ruchu
+IVFFLAT_LISTS=200             # Więcej list dla większych zbiorów
+CHUNK_SIZE=1500               # Większe chunki dla długich dokumentów
+Optymalizacja dla dużych zbiorów
 bash
-# Testy jednostkowe
-uv run pytest tests/
+# Utwórz indeksy z większą liczbą list
+semantic-docs create-indexes --force
 
-# Testy z coverage
-uv run pytest --cov=semantic_doc_search tests/
-
-# Testy integracyjne (wymagają bazy danych)
-uv run pytest tests/integration/ -m integration
-
-# Testy wydajności
-uv run pytest tests/performance/ -m slow
-📈 Wydajność
-Benchmarki
-Wyszukiwanie semantyczne: ~50ms dla 1M dokumentów
-
-Wyszukiwanie hybrydowe: ~80ms dla 1M dokumentów
-
-Indeksowanie: ~1000 dokumentów/minutę
-
-Memory usage: ~2GB RAM dla 100k embeddingów
-
-Optymalizacje
-IVFFlat indexy - przybliżone wyszukiwanie NN
-
-Connection pooling - zarządzanie połączeniami DB
-
-Batch processing - grupowanie operacji
-
-Embedding cache - Redis/memory cache
-
-🤝 Rozwój
-Setup deweloperski
+# Użyj modeli o wyższej wymiarowości dla lepszej jakości
+semantic-docs docs add --title "..." --content "..." \
+  --embed --model all-mpnet-base-v2  # 768 wymiarów zamiast 384
+🚨 Rozwiązywanie problemów
+Problem: Brak połączenia z bazą danych
 bash
-# Instalacja z dev dependencies
-uv sync --extra dev
+# Sprawdź status PostgreSQL
+sudo systemctl status postgresql
 
-# Pre-commit hooks
-pre-commit install
-
-# Formatowanie kodu
-ruff format .
-black .
-
-# Type checking
-mypy semantic_doc_search/
-
-# Linting
-ruff check .
-Struktura commitów
+# Sprawdź konfigurację połączenia
+semantic-docs status
+Problem: Błąd instalacji pgvector
 bash
-feat: dodanie nowego modelu embeddingów
-fix: naprawa błędu wyszukiwania hybrydowego
-docs: aktualizacja README
-refactor: optymalizacja połączeń z bazą danych
-test: dodanie testów dla search engine
-📋 TODO / Roadmap
- FastAPI REST API - webowy interfejs
-
- Elasticsearch integration - dodatkowy backend
-
- Multi-tenant support - izolacja danych
-
- Real-time indexing - WebSocket updates
-
- OCR integration - przetwarzanie PDF/obrazów
-
- Advanced analytics - dashboard z metrykami
-
- Kubernetes deployment - production scaling
-
- Graph embeddings - relacje między dokumentami
-
-🐛 Znane Problemy
-PostgreSQL Connection Issues
+# Upewnij się, że masz zainstalowane dev headers
+sudo apt install postgresql-server-dev-all  # Ubuntu/Debian
+Problem: Brak modeli Sentence Transformers
 bash
-# Zwiększenie limitu połączeń
-max_connections = 200
-
-# Timeout settings
-statement_timeout = 30s
-Memory Issues z dużymi modelami
+# Ręczne pobieranie modeli
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+Problem: Powolne wyszukiwanie
 bash
-# Zmniejszenie batch size
-EMBEDDING_BATCH_SIZE=16
+# Utwórz indeksy wektorowe
+semantic-docs create-indexes
 
-# Użycie mniejszego modelu
-DEFAULT_EMBEDDING_MODEL=all-MiniLM-L6-v2
+# Sprawdź statystyki bazy danych
+semantic-docs status --verbose
+🎛️ Parametry CLI
+Globalne opcje
+--verbose/-v: Szczegółowe logowanie
+
+--quiet/-q: Tylko błędy
+
+--config-file: Ścieżka do pliku .env
+
+Zarządzanie dokumentami
+docs add: Dodaj dokument
+
+docs show: Wyświetl dokument
+
+docs update: Aktualizuj dokument
+
+docs delete: Usuń dokument
+
+docs list: Lista dokumentów
+
+Wyszukiwanie
+search text: Wyszukiwanie pełnotekstowe
+
+search semantic: Wyszukiwanie semantyczne
+
+search hybrid: Wyszukiwanie hybrydowe
+
+search recommend: Rekomendacje
+
+Narzędzia
+init: Inicjalizacja systemu
+
+status: Status systemu
+
+create-indexes: Tworzenie indeksów
+
+history: Historia wyszukiwań
+
+version: Informacje o wersji
+
+🛡️ Ograniczenia
+System jest zoptymalizowany dla języka angielskiego (indeksy pełnotekstowe)
+
+Domyślne modele mają ograniczoną długość dokumentów (512 tokenów dla BERT-based)
+
+W przypadku dużych kolekcji dokumentów zalecane jest wykorzystanie modeli o wyższej wymiarowości
+
+OpenAI API ma limity rate-limiting i kosztów
+
+🔗 Linki
+Dokumentacja pgvector
+
+Sentence Transformers
+
+PostgreSQL
+
+OpenAI Embeddings
+
 📄 Licencja
-MIT License - szczegóły w pliku LICENSE
+MIT License - zobacz plik LICENSE dla szczegółów.
 
-🙏 Podziękowania
-pgvector - rozszerzenie wektorowe PostgreSQL
+🤝 Wkład w projekt
+Chętnie przyjmujemy Pull Requesty! Zobacz CONTRIBUTING.md dla wytycznych.
 
-Sentence Transformers - embeddings SOTA
+💬 Wsparcie
+🐛 Zgłoś bug: GitHub Issues
 
-PostgreSQL - potężna baza danych
+📧 Email: support@example.com
 
-Rich - piękny terminal
-
-📞 Wsparcie
-📧 Email: team@semanticdocs.com
-
-🐛 Issues: GitHub Issues
-
-💬 Discussions: GitHub Discussions
-
-📖 Docs: Documentation
-
-<div align="center"> <p>Zbudowane z ❤️ dla społeczności AI i NLP</p> <p>⭐ Jeśli ten projekt Ci pomógł, zostaw gwiazdkę!</p> </div>
+💬 Discord: Link do serwera

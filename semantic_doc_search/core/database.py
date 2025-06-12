@@ -1,511 +1,603 @@
-"""
-Database connection and operations management.
+# semantic_doc_search/core/database.py
+# Poprawiony moduł dla psycopg3 z connection pooling
 
-Handles PostgreSQL connections with pgvector support using SQLAlchemy 2.0 and psycopg3.
+"""
+Moduł zarządzania bazą danych PostgreSQL z pgvector.
+Wykorzystuje psycopg3 z connection pooling dla optymalnej wydajności.
+Obsługuje zarówno bezpośrednie operacje psycopg3 jak i SQLAlchemy ORM.
 """
 
 import logging
-from contextlib import asynccontextmanager, contextmanager
-from typing import Any
+from typing import Optional, List, Dict, Any, Sequence
+from contextlib import contextmanager, asynccontextmanager
+import asyncio
+from types import TracebackType
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session, sessionmaker
-from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool, AsyncConnectionPool
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from semantic_doc_search.config.settings import DatabaseConfig, config as app_global_config
 
-from semantic_doc_search.config.settings import get_settings, AppSettings
-from semantic_doc_search.core.models import Base, Document, DocumentEmbedding
-
+# Konfiguracja loggera
 logger = logging.getLogger(__name__)
 
 
-class Database:
+class DatabaseManager:
     """
-    Klasa zarządzania bazą danych PostgreSQL z pgvector.
-    
-    Obsługuje zarówno synchroniczne jak i asynchroniczne połączenia
-    z wykorzystaniem najnowszych wersji psycopg3 i SQLAlchemy 2.0.
+    Menedżer bazy danych z connection pooling dla psycopg3.
+    Obsługuje synchroniczne i asynchroniczne operacje.
     """
     
-    def __init__(self, settings: AppSettings | None = None):
-        """Inicjalizuje połączenie z bazą danych."""
-        self.settings = settings or get_settings()
+    def __init__(self, db_config: DatabaseConfig):
+        """
+        Inicjalizacja menedżera bazy danych.
+        
+        Args:
+            db_config: Konfiguracja bazy danych.
+        """
+        self.config = db_config
+        self._sync_pool: Optional[ConnectionPool] = None
+        self._async_pool: Optional[AsyncConnectionPool] = None
+        self._initialized = False
+        
+        # Connection string dla psycopg3
+        self.dsn = self._build_dsn()
+        
+        # SQLAlchemy engines i session makers
         self._engine = None
         self._async_engine = None
-        self._session_factory = None
-        self._async_session_factory = None
-        self._pool = None
+        self._session_maker = None
+        self._async_session_maker = None
         
-    @property
-    def engine(self):
-        """Lazy loading silnika SQLAlchemy."""
-        if self._engine is None:
+        logger.info(f"DatabaseManager initialized with DSN: {self._safe_dsn()}")
+    
+    def _build_dsn(self) -> str:
+        """Buduje connection string dla psycopg3."""
+        return (
+            f"postgresql://{self.config.db_user}:{self.config.db_password}"
+            f"@{self.config.db_host}:{self.config.db_port}/{self.config.db_name}"
+        )
+    
+    def _safe_dsn(self) -> str:
+        """Zwraca bezpieczną wersję DSN (bez hasła) do logowania."""
+        return (
+            f"postgresql://{self.config.db_user}:***"
+            f"@{self.config.db_host}:{self.config.db_port}/{self.config.db_name}"
+        )
+    
+    def initialize_pools(self) -> None:
+        """
+        Inicjalizuje connection pools.
+        """
+        if self._initialized:
+            logger.warning("Database pools already initialized")
+            return
+        
+        try:
+            # Synchroniczny pool
+            self._sync_pool = ConnectionPool(
+                conninfo=self.dsn,
+                min_size=self.config.min_pool_size,
+                max_size=self.config.max_pool_size,
+                open=True,
+                configure=self._configure_connection
+            )
+            
+            # Asynchroniczny pool
+            self._async_pool = AsyncConnectionPool(
+                conninfo=self.dsn,
+                min_size=self.config.min_pool_size,
+                max_size=self.config.max_pool_size,
+                open=True,
+                configure=self._configure_connection
+            )
+            
+            # SQLAlchemy engines
             self._engine = create_engine(
-                self.settings.database.url,
-                pool_size=self.settings.database.min_pool_size,
-                max_overflow=self.settings.database.max_pool_size - self.settings.database.min_pool_size,
-                pool_timeout=self.settings.database.pool_timeout,
-                echo=self.settings.debug,
-                future=True
+                self.dsn,
+                pool_size=self.config.max_pool_size,
+                max_overflow=0,
+                pool_pre_ping=True,
+                echo=app_global_config.debug
             )
-        return self._engine
-    
-    @property
-    def async_engine(self):
-        """Lazy loading asynchronicznego silnika SQLAlchemy."""
-        if self._async_engine is None:
+            
             self._async_engine = create_async_engine(
-                self.settings.database.async_url,
-                pool_size=self.settings.database.min_pool_size,
-                max_overflow=self.settings.database.max_pool_size - self.settings.database.min_pool_size,
-                pool_timeout=self.settings.database.pool_timeout,
-                echo=self.settings.debug,
-                future=True
+                self.dsn.replace("postgresql://", "postgresql+asyncpg://"),
+                pool_size=self.config.max_pool_size,
+                max_overflow=0,
+                pool_pre_ping=True,
+                echo=app_global_config.debug
             )
-        return self._async_engine
-    
-    @property
-    def session_factory(self):
-        """Factory dla sesji SQLAlchemy."""
-        if self._session_factory is None:
-            self._session_factory = sessionmaker(
-                bind=self.engine,
-                class_=Session,
+            
+            # Session makers
+            self._session_maker = sessionmaker(bind=self._engine, expire_on_commit=False)
+            self._async_session_maker = async_sessionmaker(
+                bind=self._async_engine, 
                 expire_on_commit=False
             )
-        return self._session_factory
-    
-    @property
-    def async_session_factory(self):
-        """Factory dla asynchronicznych sesji SQLAlchemy."""
-        if self._async_session_factory is None:
-            self._async_session_factory = async_sessionmaker(
-                bind=self.async_engine,
-                class_=AsyncSession,
-                expire_on_commit=False
-            )
-        return self._async_session_factory
-    
-    @property
-    def pool(self):
-        """Connection pool psycopg3."""
-        if self._pool is None:
-            self._pool = ConnectionPool(
-                self.settings.database.url,
-                min_size=self.settings.database.min_pool_size,
-                max_size=self.settings.database.max_pool_size,
-                timeout=self.settings.database.pool_timeout,
-                open=True
-            )
-        return self._pool
-    
-    def initialize(self) -> None:
-        """Inicjalizuje bazę danych i tworzy tabele."""
-        logger.info("Inicjalizacja bazy danych...")
-        
-        # Sprawdź czy można połączyć się z bazą
-        self.test_connection()
-        
-        # Włącz rozszerzenie pgvector
-        self.enable_pgvector()
-        
-        # Utwórz tabele
-        self.create_tables()
-        
-        logger.info("Baza danych została zainicjalizowana")
-    
-    def test_connection(self) -> bool:
-        """Testuje połączenie z bazą danych."""
-        try:
-            with self.get_connection() as conn:
-                result = conn.execute("SELECT version()").fetchone()
-                logger.info(f"Połączono z PostgreSQL: {result[0]}")
-                return True
+            
+            self._initialized = True
+            logger.info("Database connection pools initialized successfully")
+            
         except Exception as e:
-            logger.error(f"Nie można połączyć się z bazą danych: {e}")
+            logger.error(f"Failed to initialize database pools: {e}")
             raise
     
-    def enable_pgvector(self) -> None:
-        """Włącza rozszerzenie pgvector."""
-        try:
-            with self.get_connection() as conn:
-                conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                conn.commit()
-                logger.info("Rozszerzenie pgvector zostało włączone")
-        except Exception as e:
-            logger.error(f"Nie można włączyć rozszerzenia pgvector: {e}")
-            raise
-    
-    def create_tables(self) -> None:
-        """Tworzy tabele w bazie danych."""
-        try:
-            Base.metadata.create_all(self.engine)
-            logger.info("Tabele zostały utworzone")
-        except Exception as e:
-            logger.error(f"Nie można utworzyć tabel: {e}")
-            raise
-    
-    def drop_tables(self) -> None:
-        """Usuwa wszystkie tabele."""
-        try:
-            Base.metadata.drop_all(self.engine)
-            logger.info("Tabele zostały usunięte")
-        except Exception as e:
-            logger.error(f"Nie można usunąć tabel: {e}")
-            raise
+    def _configure_connection(self, conn: Any) -> None:
+        """
+        Konfiguruje nowe połączenie.
+        
+        Args:
+            conn: Połączenie psycopg3
+        """
+        # Włączenie rozszerzenia pgvector
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            cur.execute("SET search_path TO public;")
+        
+        # Konfiguracja connection dla wydajności
+        conn.autocommit = False
+        
+        logger.debug("Connection configured successfully")
     
     @contextmanager
     def get_connection(self):
-        """Context manager dla połączenia psycopg3."""
-        with self.pool.connection() as conn:
+        """
+        Context manager dla synchronicznego połączenia z bazy danych.
+        
+        Yields:
+            psycopg.Connection: Połączenie do bazy danych
+        """
+        if not self._initialized:
+            self.initialize_pools()
+        
+        if self._sync_pool is None:
+            raise RuntimeError("Sync pool not initialized")
+        
+        conn = None
+        try:
+            conn = self._sync_pool.getconn()
             conn.row_factory = dict_row
             yield conn
-    
-    @contextmanager
-    def get_session(self):
-        """Context manager dla sesji SQLAlchemy."""
-        session = self.session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Database error: {e}")
             raise
         finally:
-            session.close()
+            if conn:
+                try:
+                    conn.commit()
+                    if self._sync_pool:
+                        self._sync_pool.putconn(conn)
+                except Exception as e:
+                    logger.error(f"Error returning connection to pool: {e}")
     
     @asynccontextmanager
-    async def get_async_session(self):
-        """Context manager dla asynchronicznej sesji SQLAlchemy."""
-        async with self.async_session_factory() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
+    async def get_async_connection(self):
+        """
+        Async context manager dla asynchronicznego połączenia.
+        
+        Yields:
+            psycopg.AsyncConnection: Asynchroniczne połączenie do bazy danych
+        """
+        if not self._initialized:
+            self.initialize_pools()
+        
+        if self._async_pool is None:
+            raise RuntimeError("Async pool not initialized")
+        
+        conn = None
+        try:
+            conn = await self._async_pool.getconn()
+            conn.row_factory = dict_row
+            yield conn
+        except Exception as e:
+            if conn:
+                await conn.rollback()
+            logger.error(f"Async database error: {e}")
+            raise
+        finally:
+            if conn:
+                try:
+                    await conn.commit()
+                    if self._async_pool:
+                        await self._async_pool.putconn(conn)
+                except Exception as e:
+                    logger.error(f"Error returning async connection to pool: {e}")
     
-    # Document operations
-    def create_document(self, **kwargs: Any) -> Document:
-        """Tworzy nowy dokument."""
-        with self.get_session() as session:
-            document = Document(**kwargs)
-            session.add(document)
-            session.flush()
-            session.refresh(document)
-            return document
-    
-    def get_document(self, document_id: int) -> Document | None:
-        """Pobiera dokument po ID."""
-        with self.get_session() as session:
-            return session.get(Document, document_id)
-    
-    def get_documents(
-        self, 
-        limit: int = 100, 
-        offset: int = 0,
-        filters: dict[str, Any] | None = None
-    ) -> list[Document]:
-        """Pobiera listę dokumentów z opcjonalnymi filtrami."""
-        with self.get_session() as session:
-            query = session.query(Document)
+    def execute_query(self, query: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+        """
+        Wykonuje zapytanie SELECT i zwraca wyniki.
+        
+        Args:
+            query: Zapytanie SQL
+            params: Parametry zapytania
             
-            if filters:
-                if 'source' in filters:
-                    query = query.filter(Document.source == filters['source'])
-                if 'category' in filters:
-                    query = query.filter(Document.category == filters['category'])
-                if 'author' in filters:
-                    query = query.filter(Document.author == filters['author'])
-                if 'is_active' in filters:
-                    query = query.filter(Document.is_active == filters['is_active'])
+        Returns:
+            Lista słowników z wynikami
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+    
+    def execute_command(self, command: str, params: Sequence[Any] = ()) -> int:
+        """
+        Wykonuje komendę SQL (INSERT, UPDATE, DELETE).
+        
+        Args:
+            command: Komenda SQL
+            params: Parametry komendy
             
-            return query.offset(offset).limit(limit).all()
+        Returns:
+            Liczba zmienionych wierszy
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(command, params)
+                return cur.rowcount
     
-    def update_document(self, document_id: int, **kwargs: Any) -> Document | None:
-        """Aktualizuje dokument."""
-        with self.get_session() as session:
-            document = session.get(Document, document_id)
-            if document:
-                for key, value in kwargs.items():
-                    if hasattr(document, key):
-                        setattr(document, key, value)
-                session.flush()
-                session.refresh(document)
-            return document
+    def execute_many(self, command: str, params_list: List[Sequence[Any]]) -> int:
+        """
+        Wykonuje komendę SQL dla wielu zestawów parametrów.
+        
+        Args:
+            command: Komenda SQL
+            params_list: Lista zestawów parametrów
+            
+        Returns:
+            Liczba zmienionych wierszy
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(command, params_list)
+                return cur.rowcount
     
-    def delete_document(self, document_id: int) -> bool:
-        """Usuwa dokument."""
-        with self.get_session() as session:
-            document = session.get(Document, document_id)
-            if document:
-                session.delete(document)
-                return True
+    async def execute_query_async(self, query: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+        """
+        Asynchronicznie wykonuje zapytanie SELECT.
+        
+        Args:
+            query: Zapytanie SQL
+            params: Parametry zapytania
+            
+        Returns:
+            Lista słowników z wynikami
+        """
+        async with self.get_async_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchall()
+    
+    async def execute_command_async(self, command: str, params: Sequence[Any] = ()) -> int:
+        """
+        Asynchronicznie wykonuje komendę SQL.
+        
+        Args:
+            command: Komenda SQL
+            params: Parametry komendy
+            
+        Returns:
+            Liczba zmienionych wierszy
+        """
+        async with self.get_async_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(command, params)
+                return cur.rowcount
+    
+    def test_connection(self) -> bool:
+        """
+        Testuje połączenie z bazą danych.
+        
+        Returns:
+            True jeśli połączenie działa, False w przeciwnym przypadku
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1 as test")
+                    result = cur.fetchone()
+                    if result and result['test'] == 1:
+                        logger.info("Database connection test successful")
+                        return True
+            return False
+        except Exception as e:
+            logger.error(f"Database connection test failed: {e}")
             return False
     
-    # Embedding operations
-    def create_embedding(self, **kwargs: Any) -> DocumentEmbedding:
-        """Tworzy nowy embedding."""
-        with self.get_session() as session:
-            embedding = DocumentEmbedding(**kwargs)
-            session.add(embedding)
-            session.flush()
-            session.refresh(embedding)
-            return embedding
-    
-    def get_embeddings_by_document(self, document_id: int) -> list[DocumentEmbedding]:
-        """Pobiera wszystkie embeddings dla dokumentu."""
-        with self.get_session() as session:
-            return session.query(DocumentEmbedding).filter(
-                DocumentEmbedding.document_id == document_id
-            ).all()
-    
-    def delete_embeddings_by_document(self, document_id: int) -> int:
-        """Usuwa wszystkie embeddings dla dokumentu."""
-        with self.get_session() as session:
-            count = session.query(DocumentEmbedding).filter(
-                DocumentEmbedding.document_id == document_id
-            ).count()
-            session.query(DocumentEmbedding).filter(
-                DocumentEmbedding.document_id == document_id
-            ).delete()
-            return count
-    
-    # Vector search operations
-    def similarity_search(
-        self,
-        query_embedding: list[float],
-        model_name: str,
-        limit: int = 10,
-        similarity_threshold: float | None = None,
-        metric: str = "cosine"
-    ) -> list[dict[str, Any]]:
-        """Wykonuje wyszukiwanie podobieństwa wektorowego."""
-        
-        # Wybierz operator w zależności od metryki
-        operator_map = {
-            "cosine": "<=>",
-            "l2": "<->", 
-            "inner_product": "<#>"
-        }
-        operator = operator_map.get(metric, "<=>")
-        
-        query = f"""
-        SELECT 
-            de.document_id,
-            de.embedding {operator} %s::vector AS similarity,
-            de.chunk_index,
-            de.chunk_text,
-            d.title,
-            d.content,
-            d.source,
-            d.author,
-            d.category
-        FROM document_embeddings de
-        JOIN documents d ON de.document_id = d.id
-        WHERE de.model_name = %s
-            AND d.is_active = true
-            {f"AND de.embedding {operator} %s::vector < %s" if similarity_threshold else ""}
-        ORDER BY de.embedding {operator} %s::vector
-        LIMIT %s
+    def test_pgvector(self) -> bool:
         """
+        Testuje dostępność rozszerzenia pgvector.
         
-        params: list[Any] = [query_embedding, model_name]
-        if similarity_threshold:
-            params.extend([query_embedding, similarity_threshold])
-        params.extend([query_embedding, limit])
-        
-        with self.get_connection() as conn:
-            result = conn.execute(query, params).fetchall()
-            return [dict(row) for row in result]
-    
-    def hybrid_search(
-        self,
-        query_text: str,
-        query_embedding: list[float],
-        model_name: str,
-        semantic_weight: float = 0.7,
-        limit: int = 10
-    ) -> list[dict[str, Any]]:
-        """Wykonuje hybrydowe wyszukiwanie (semantyczne + full-text)."""
-        
-        query = """
-        WITH semantic_results AS (
-            SELECT 
-                de.document_id,
-                de.embedding <=> %s::vector AS semantic_distance,
-                ROW_NUMBER() OVER (ORDER BY de.embedding <=> %s::vector) AS semantic_rank
-            FROM document_embeddings de
-            JOIN documents d ON de.document_id = d.id
-            WHERE de.model_name = %s AND d.is_active = true
-            ORDER BY de.embedding <=> %s::vector
-            LIMIT %s
-        ),
-        fulltext_results AS (
-            SELECT 
-                d.id as document_id,
-                ts_rank(d.search_vector, plainto_tsquery('polish', %s)) AS fulltext_score,
-                ROW_NUMBER() OVER (ORDER BY ts_rank(d.search_vector, plainto_tsquery('polish', %s)) DESC) AS fulltext_rank
-            FROM documents d
-            WHERE d.search_vector @@ plainto_tsquery('polish', %s)
-                AND d.is_active = true
-            ORDER BY ts_rank(d.search_vector, plainto_tsquery('polish', %s)) DESC
-            LIMIT %s
-        )
-        SELECT 
-            COALESCE(sr.document_id, fr.document_id) as document_id,
-            COALESCE(sr.semantic_distance, 1.0) as semantic_distance,
-            COALESCE(fr.fulltext_score, 0.0) as fulltext_score,
-            COALESCE(sr.semantic_rank, %s) as semantic_rank,
-            COALESCE(fr.fulltext_rank, %s) as fulltext_rank,
-            (%s * (1.0 / COALESCE(sr.semantic_rank, %s)) + 
-             %s * (1.0 / COALESCE(fr.fulltext_rank, %s))) as hybrid_score,
-            d.title,
-            d.content,
-            d.source,
-            d.author,
-            d.category
-        FROM semantic_results sr
-        FULL OUTER JOIN fulltext_results fr ON sr.document_id = fr.document_id
-        JOIN documents d ON COALESCE(sr.document_id, fr.document_id) = d.id
-        ORDER BY hybrid_score DESC
-        LIMIT %s
+        Returns:
+            True jeśli pgvector jest dostępne, False w przeciwnym przypadku
         """
-        
-        max_rank = limit * 2
-        fulltext_weight = 1.0 - semantic_weight
-        
-        params: list[Any] = [
-            query_embedding, query_embedding, model_name, query_embedding, limit,
-            query_text, query_text, query_text, query_text, limit,
-            max_rank, max_rank,
-            semantic_weight, max_rank,
-            fulltext_weight, max_rank,
-            limit
-        ]
-        
-        with self.get_connection() as conn:
-            result = conn.execute(query, params).fetchall()
-            return [dict(row) for row in result]
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM pg_extension WHERE extname = 'vector'
+                        ) as has_vector
+                    """)
+                    result = cur.fetchone()
+                    if result and result['has_vector']:
+                        logger.info("pgvector extension is available")
+                        return True
+            logger.warning("pgvector extension not found")
+            return False
+        except Exception as e:
+            logger.error(f"pgvector test failed: {e}")
+            return False
     
-    def fulltext_search(
-        self,
-        query_text: str,
-        limit: int = 10,
-        filters: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """Wykonuje wyszukiwanie pełnotekstowe."""
-        
-        where_conditions = ["d.search_vector @@ plainto_tsquery('polish', %s)", "d.is_active = true"]
-        params: list[Any] = [query_text]
-        
-        if filters:
-            if 'source' in filters:
-                where_conditions.append("d.source = %s")
-                params.append(filters['source'])
-            if 'category' in filters:
-                where_conditions.append("d.category = %s") 
-                params.append(filters['category'])
-            if 'author' in filters:
-                where_conditions.append("d.author = %s")
-                params.append(filters['author'])
-        
-        params.extend([query_text, limit])
-        
-        query = f"""
-        SELECT 
-            d.id as document_id,
-            d.title,
-            d.content,
-            d.source,
-            d.author,
-            d.category,
-            ts_rank(d.search_vector, plainto_tsquery('polish', %s)) AS score,
-            ts_headline('polish', d.content, plainto_tsquery('polish', %s), 
-                       'MaxWords=35, MinWords=15, ShortWord=3') AS headline
-        FROM documents d
-        WHERE {' AND '.join(where_conditions)}
-        ORDER BY score DESC
-        LIMIT %s
+    def get_pool_stats(self) -> Dict[str, Any]:
         """
+        Zwraca statystyki connection pool.
         
-        with self.get_connection() as conn:
-            result = conn.execute(query, params).fetchall()
-            return [dict(row) for row in result]
-    
-    def update_search_vector(self, document_id: int) -> None:
-        """Aktualizuje wektor wyszukiwania pełnotekstowego."""
-        query = """
-        UPDATE documents 
-        SET search_vector = to_tsvector('polish', COALESCE(title, '') || ' ' || COALESCE(content, ''))
-        WHERE id = %s
+        Returns:
+            Słownik ze statystykami pool
         """
+        stats = {}
         
-        with self.get_connection() as conn:
-            conn.execute(query, [document_id])
-            conn.commit()
-    
-    def create_vector_indexes(self, dimension: int, lists: int | None = None) -> None:
-        """Tworzy indeksy wektorowe dla konkretnego wymiaru."""
-        if lists is None:
-            lists = self.settings.database.ivfflat_lists
+        if self._sync_pool:
+            stats['sync_pool'] = {
+                'size': self._sync_pool.get_stats().pool_size,
+                'available': self._sync_pool.get_stats().pool_available,
+                'waiting': self._sync_pool.get_stats().requests_waiting,
+            }
         
-        # Sprawdź czy indeksy już istnieją
-        index_check_query = """
-        SELECT indexname FROM pg_indexes 
-        WHERE tablename = 'document_embeddings' 
-        AND indexname LIKE %s
-        """
+        if self._async_pool:
+            stats['async_pool'] = {
+                'size': self._async_pool.get_stats().pool_size,
+                'available': self._async_pool.get_stats().pool_available,
+                'waiting': self._async_pool.get_stats().requests_waiting,
+            }
         
-        with self.get_connection() as conn:
-            existing_indexes = conn.execute(
-                index_check_query, 
-                [f"%_vector_{dimension}_%"]
-            ).fetchall()
-            
-            if existing_indexes:
-                logger.info(f"Indeksy wektorowe dla wymiaru {dimension} już istnieją")
-                return
-            
-            # Utwórz indeksy IVFFlat
-            indexes = [
-                f"CREATE INDEX CONCURRENTLY idx_embeddings_vector_{dimension}_cosine ON document_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = {lists}) WHERE dimension = {dimension}",
-                f"CREATE INDEX CONCURRENTLY idx_embeddings_vector_{dimension}_l2 ON document_embeddings USING ivfflat (embedding vector_l2_ops) WITH (lists = {lists}) WHERE dimension = {dimension}",
-                f"CREATE INDEX CONCURRENTLY idx_embeddings_vector_{dimension}_ip ON document_embeddings USING ivfflat (embedding vector_ip_ops) WITH (lists = {lists}) WHERE dimension = {dimension}"
-            ]
-            
-            for index_sql in indexes:
-                try:
-                    conn.execute(index_sql)
-                    conn.commit()
-                    logger.info(f"Utworzono indeks wektorowy: {index_sql.split()[2]}")
-                except Exception as e:
-                    logger.error(f"Nie można utworzyć indeksu: {e}")
-                    conn.rollback()
-    
-    def get_stats(self) -> dict[str, Any]:
-        """Zwraca statystyki bazy danych."""
-        stats_query = """
-        SELECT 
-            (SELECT COUNT(*) FROM documents WHERE is_active = true) as active_documents,
-            (SELECT COUNT(*) FROM documents) as total_documents,
-            (SELECT COUNT(*) FROM document_embeddings) as total_embeddings,
-            (SELECT COUNT(DISTINCT model_name) FROM document_embeddings) as unique_models,
-            (SELECT AVG(LENGTH(content)) FROM documents WHERE is_active = true) as avg_content_length
-        """
-        
-        with self.get_connection() as conn:
-            result = conn.execute(stats_query).fetchone()
-            return dict(result) if result else {}
+        return stats
     
     def close(self) -> None:
-        """Zamyka połączenia z bazą danych."""
-        if self._pool:
-            self._pool.close()
+        """
+        Zamyka connection pools i zwalnia zasoby.
+        """
+        if self._sync_pool:
+            self._sync_pool.close()
+            self._sync_pool = None
+        
+        if self._async_pool:
+            # Asynchroniczne zamknięcie
+            asyncio.create_task(self._async_pool.close())
+            self._async_pool = None
+        
         if self._engine:
             self._engine.dispose()
+            self._engine = None
+            
         if self._async_engine:
-            self._async_engine.dispose()
+            asyncio.create_task(self._async_engine.aclose())
+            self._async_engine = None
         
-        logger.info("Połączenia z bazą danych zostały zamknięte")
+        self._initialized = False
+        logger.info("Database pools closed")
+    
+    def create_tables(self) -> None:
+        """
+        Tworzy tabele w bazie danych używając SQL skryptów.
+        """
+        from pathlib import Path
+        
+        # Ścieżka do pliku SQL
+        sql_file = Path(__file__).parent.parent / "sql" / "create_tables.sql"
+        
+        if not sql_file.exists():
+            logger.warning(f"SQL file not found: {sql_file}")
+            return
+        
+        try:
+            sql_content = sql_file.read_text(encoding='utf-8')
+            
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql_content)
+            
+            logger.info("Database tables created successfully")
+            
+        except Exception as e:
+            logger.error(f"Error creating tables: {e}")
+            raise
+    
+    def get_database_info(self) -> Dict[str, Any]:
+        """
+        Zwraca informacje o bazie danych.
+        """
+        info = {}
+        
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Wersja PostgreSQL
+                    cur.execute("SELECT version()")
+                    version_result = cur.fetchone()
+                    if version_result:
+                        info['postgresql_version'] = version_result['version'].split()[1]
+                    
+                    # Wersja pgvector
+                    cur.execute("""
+                        SELECT extversion 
+                        FROM pg_extension 
+                        WHERE extname = 'vector'
+                    """)
+                    pgvector_result = cur.fetchone()
+                    if pgvector_result:
+                        info['pgvector_version'] = pgvector_result['extversion']
+                    else:
+                        info['pgvector_version'] = 'not installed'
+                    
+                    # Liczba dokumentów
+                    cur.execute("SELECT COUNT(*) as count FROM documents")
+                    docs_result = cur.fetchone()
+                    info['documents_count'] = docs_result['count'] if docs_result else 0
+                    
+                    # Liczba embeddings
+                    cur.execute("SELECT COUNT(*) as count FROM document_embeddings")
+                    embeddings_result = cur.fetchone()
+                    info['embeddings_count'] = embeddings_result['count'] if embeddings_result else 0
+                    
+        except Exception as e:
+            logger.error(f"Error getting database info: {e}")
+            info['error'] = str(e)
+        
+        return info
+    
+    def create_vector_indexes(self, force: bool = False) -> None:
+        """
+        Tworzy indeksy wektorowe w bazie danych.
+        
+        Args:
+            force: Czy wymusić ponowne utworzenie indeksów
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if force:
+                        # Usuń istniejące indeksy
+                        index_names = [
+                            'document_embeddings_vector_l2_idx',
+                            'document_embeddings_vector_cosine_idx', 
+                            'document_embeddings_vector_ip_idx'
+                        ]
+                        
+                        for index_name in index_names:
+                            cur.execute(f"DROP INDEX IF EXISTS {index_name}")
+                    
+                    # Sprawdź czy tabela ma jakieś embeddings
+                    cur.execute("SELECT COUNT(*) as count FROM document_embeddings WHERE embedding IS NOT NULL")
+                    embedding_count = cur.fetchone()['count']
+                    
+                    if embedding_count == 0:
+                        logger.warning("No embeddings found in database. Skipping vector index creation.")
+                        return
+                    
+                    # Utwórz indeksy wektorowe
+                    lists_param = max(embedding_count // 1000, 1)  # Dynamiczne listy
+                    lists_param = min(lists_param, 1000)  # Maksymalnie 1000 list
+                    
+                    cur.execute(f"""
+                        SELECT create_vector_indexes('document_embeddings', {lists_param})
+                    """)
+                    
+            logger.info("Vector indexes created successfully")
+            
+        except Exception as e:
+            logger.error(f"Error creating vector indexes: {e}")
+            raise
+    
+    def __enter__(self):
+        """Support for context manager."""
+        self.initialize_pools()
+        return self
+    
+    def __exit__(self, 
+                 exc_type: Optional[type[BaseException]], 
+                 exc_val: Optional[BaseException], 
+                 exc_tb: Optional[TracebackType]
+                 ) -> None:
+        """Support for context manager."""
+        self.close()
+
+
+# Globalna instancja menedżera - używa konfiguracji z app_global_config
+db_manager = DatabaseManager(db_config=app_global_config.database)
+
+
+# Funkcje pomocnicze dla backward compatibility
+def get_connection():
+    """Zwraca connection context manager."""
+    return db_manager.get_connection()
+
+
+def get_sync_connection():
+    """Zwraca synchroniczne połączenie psycopg (alias do get_connection)."""
+    return db_manager.get_connection()
+
+
+def execute_query(query: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+    """Wykonuje zapytanie SELECT."""
+    return db_manager.execute_query(query, params)
+
+
+def execute_command(command: str, params: Sequence[Any] = ()) -> int:
+    """Wykonuje komendę SQL."""
+    return db_manager.execute_command(command, params)
+
+
+def test_connection() -> bool:
+    """Testuje połączenie z bazą danych."""
+    return db_manager.test_connection()
+
+
+def test_pgvector() -> bool:
+    """Testuje dostępność pgvector."""
+    return db_manager.test_pgvector()
+
+
+# SQLAlchemy session management functions
+@contextmanager
+def get_sync_session():
+    """Context manager dla synchronicznej sesji SQLAlchemy."""
+    if not db_manager._initialized:
+        db_manager.initialize_pools()
+    
+    session = db_manager._session_maker()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_sync_session_raw() -> Session:
+    """Zwraca synchroniczną sesję SQLAlchemy (bez context managera)."""
+    if not db_manager._initialized:
+        db_manager.initialize_pools()
+    return db_manager._session_maker()
+
+
+@contextmanager
+def get_sync_session_context():
+    """Context manager dla synchronicznej sesji SQLAlchemy."""
+    session = get_sync_session_raw()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+async def get_async_session() -> AsyncSession:
+    """Zwraca asynchroniczną sesję SQLAlchemy."""
+    if not db_manager._initialized:
+        db_manager.initialize_pools()
+    return db_manager._async_session_maker()
+
+
+@asynccontextmanager
+async def get_async_session_context():
+    """Context manager dla asynchronicznej sesji SQLAlchemy."""
+    session = await get_async_session()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()

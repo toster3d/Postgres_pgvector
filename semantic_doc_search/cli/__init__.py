@@ -7,7 +7,7 @@ dla kolorowego i interaktywnego interfejsu użytkownika.
 """
 
 from semantic_doc_search.cli.main import cli
-from semantic_doc_search.cli.document_manager import document_group
-from semantic_doc_search.cli.search_commands import search_group
+from semantic_doc_search.cli.commands.docs import docs_group
+from semantic_doc_search.cli.commands.search import search_group
 
-__all__ = ["cli", "document_group", "search_group"]
+__all__ = ["cli", "docs_group", "search_group"]

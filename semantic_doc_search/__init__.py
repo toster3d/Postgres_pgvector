@@ -27,11 +27,11 @@ __license__ = "MIT"
 
 # Eksport głównych komponentów
 from semantic_doc_search.cli.main import cli
-from semantic_doc_search.core.database import Database
+from semantic_doc_search.core.database import DatabaseManager, db_manager
 from semantic_doc_search.core.models import Document
-from semantic_doc_search.core.embeddings import EmbeddingProvider
+from semantic_doc_search.core.embeddings import BaseEmbeddingProvider, embedding_manager
 from semantic_doc_search.core.search import SemanticSearchEngine
-from semantic_doc_search.config.settings import get_settings
+from semantic_doc_search.config.settings import config
 
 # Wersje zależności
 __dependencies__ = {
@@ -43,11 +43,13 @@ __dependencies__ = {
 # Eksport głównych publicznych API
 __all__ = [
     "cli",
-    "Database",
+    "DatabaseManager",
+    "db_manager",
     "Document",
-    "EmbeddingProvider",
+    "BaseEmbeddingProvider",
+    "embedding_manager",
     "SemanticSearchEngine",
-    "get_settings",
+    "config",
     "__version__",
     "__author__",
     "__dependencies__"

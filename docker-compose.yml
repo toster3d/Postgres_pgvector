@@ -1,0 +1,138 @@
+# Poprawiony docker-compose.yml dla Semantycznego Wyszukiwania Dokumentów
+# Ten plik naprawia problemy z psycopg_pool i optymalizuje konfigurację
+
+services:
+  # Serwis PostgreSQL z pgvector
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: semantic_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: semantic_docs
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init_db.sql:/docker-entrypoint-initdb.d/01-init_db.sql:ro
+      - ./sql/create_tables.sql:/docker-entrypoint-initdb.d/02-create_tables.sql:ro
+      - ./sql/sample_data.sql:/docker-entrypoint-initdb.d/03-sample_data.sql:ro
+    networks:
+      - semantic_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d semantic_docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Aplikacja Semantic Search
+  semantic-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: semantic_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Konfiguracja bazy danych
+      DB_HOST: postgres
+      DB_NAME: semantic_docs
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+      DB_MAX_POOL_SIZE: 20
+      DB_MIN_POOL_SIZE: 5
+      
+      # Konfiguracja embeddings
+      DEFAULT_EMBEDDING_MODEL: all-MiniLM-L6-v2
+      CHUNK_SIZE: 1000
+      CHUNK_OVERLAP: 200
+      MAX_TOKENS_PER_CHUNK: 512
+      
+      # Konfiguracja wyszukiwania
+      DEFAULT_SEMANTIC_WEIGHT: 0.7
+      IVFFLAT_LISTS: 100
+      MAX_SEARCH_RESULTS: 50
+      
+      # Konfiguracja aplikacji
+      LOG_LEVEL: INFO
+      PYTHONPATH: /app
+      
+      # Opcjonalny klucz OpenAI (zakomentowany)
+      # OPENAI_API_KEY: your_openai_key_here
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - app_temp:/app/temp
+    networks:
+      - semantic_network
+    command: ["--help"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import semantic_doc_search; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Opcjonalny serwis Redis dla cache'owania (zakomentowany)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: semantic_redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - semantic_network
+  #   command: redis-server --appendonly yes
+
+  # Serwis do ładowania danych (uruchamiany ręcznie)
+  data-loader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: semantic_data_loader
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_NAME: semantic_docs
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+      DEFAULT_EMBEDDING_MODEL: all-MiniLM-L6-v2
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    networks:
+      - semantic_network
+    profiles:
+      - tools
+    command: ["python", "/app/scripts/load_data.py", "--help"]
+
+volumes:
+  postgres_data:
+    driver: local
+  # redis_data:
+  #   driver: local
+  app_temp:
+    driver: local
+
+networks:
+  semantic_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,231 +1,232 @@
-"""Settings and configuration for semantic document search."""
-
+import os
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
+from dotenv import load_dotenv
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+# Załaduj zmienne środowiskowe z pliku .env
+load_dotenv()
+
+# Ścieżka główna projektu
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
-class DatabaseSettings(BaseSettings):
+@dataclass
+class DatabaseConfig:
     """Konfiguracja bazy danych PostgreSQL."""
     
-    model_config = SettingsConfigDict(env_prefix="DB_")
+    db_host: str = os.getenv("DB_HOST", "localhost")
+    db_port: int = int(os.getenv("DB_PORT", "5432"))
+    db_name: str = os.getenv("DB_NAME", "semantic_docs")
+    db_user: str = os.getenv("DB_USER", "postgres")
+    db_password: str = os.getenv("DB_PASSWORD", "postgres")
     
-    host: str = Field(default="localhost", description="Host bazy danych")
-    port: int = Field(default=5432, description="Port bazy danych")
-    name: str = Field(default="semantic_docs", description="Nazwa bazy danych")
-    user: str = Field(default="postgres", description="Użytkownik bazy danych")
-    password: str = Field(default="postgres", description="Hasło do bazy danych")
-    
-    # Connection pool settings
-    min_pool_size: int = Field(default=5, description="Minimalna liczba połączeń w puli")
-    max_pool_size: int = Field(default=20, description="Maksymalna liczba połączeń w puli")
-    pool_timeout: int = Field(default=30, description="Timeout połączenia w sekundach")
-    
-    # pgvector settings
-    ivfflat_lists: int = Field(default=100, description="Liczba list dla indeksu IVFFlat")
-    hnsw_m: int = Field(default=16, description="Parametr M dla indeksu HNSW")
-    hnsw_ef_construction: int = Field(default=200, description="ef_construction dla HNSW")
+    # Psycopg3 specific settings
+    min_pool_size: int = int(os.getenv("DB_MIN_POOL_SIZE", "5"))
+    max_pool_size: int = int(os.getenv("DB_MAX_POOL_SIZE", "20"))
+    connection_timeout: float = float(os.getenv("DB_CONNECTION_TIMEOUT", "30.0"))
     
     @property
     def url(self) -> str:
-        """Zwraca URL połączenia z bazą danych."""
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        """Zwraca URL połączenia do bazy danych."""
+        return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
     
     @property
     def async_url(self) -> str:
-        """Zwraca asynchroniczny URL połączenia z bazą danych."""
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        """Zwraca URL połączenia async do bazy danych."""
+        return f"postgresql+psycopg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
-class EmbeddingSettings(BaseSettings):
+@dataclass
+class EmbeddingConfig:
     """Konfiguracja modeli embeddings."""
     
-    model_config = SettingsConfigDict(env_prefix="EMBEDDING_")
+    # Domyślny model
+    default_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     
-    # Domyślny model embeddings
-    default_model: Literal["sentence-transformers", "openai", "sklearn"] = Field(
-        default="sentence-transformers",
-        description="Domyślny provider embeddings"
+    # Sentence Transformers
+    sentence_transformers_cache_dir: str = os.getenv(
+        "SENTENCE_TRANSFORMERS_CACHE", 
+        str(PROJECT_ROOT / ".cache" / "sentence_transformers")
     )
+    sentence_transformers_device: str = os.getenv("DEVICE", "cpu")
     
-    # Sentence Transformers settings
-    sentence_transformers_model: str = Field(
-        default="all-MiniLM-L6-v2",
-        description="Model Sentence Transformers"
-    )
-    device: str = Field(default="cpu", description="Urządzenie dla Sentence Transformers")
-    cache_folder: Optional[Path] = Field(default=None, description="Folder cache modeli")
+    # OpenAI
+    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
+    openai_model: str = os.getenv("OPENAI_MODEL", "text-embedding-3-small")
+    openai_timeout: float = float(os.getenv("OPENAI_TIMEOUT", "30.0"))
     
-    # OpenAI settings
-    openai_api_key: Optional[str] = Field(default=None, description="Klucz API OpenAI")
-    openai_model: str = Field(
-        default="text-embedding-3-small", 
-        description="Model OpenAI embeddings"
-    )
-    openai_base_url: Optional[str] = Field(default=None, description="Bazowy URL OpenAI API")
+    # Chunking settings
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     
-    # Chunk settings
-    chunk_size: int = Field(default=1000, description="Rozmiar chunka tekstu")
-    chunk_overlap: int = Field(default=200, description="Nakładanie się chunków")
-    
-    # Processing settings
-    batch_size: int = Field(default=32, description="Rozmiar batch do przetwarzania")
-    enable_cache: bool = Field(default=True, description="Czy włączyć cache embeddings")
-    
-    @field_validator("cache_folder", mode="before")
-    @classmethod
-    def validate_cache_folder(cls, v: Any) -> Optional[Path]:
-        """Waliduje folder cache."""
-        if v is None:
-            return None
-        path = Path(v)
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-        return path
+    # Batch processing
+    batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 
 
-class SearchSettings(BaseSettings):
+@dataclass
+class SearchConfig:
     """Konfiguracja wyszukiwania."""
     
-    model_config = SettingsConfigDict(env_prefix="SEARCH_")
+    # Domyślne limity
+    default_limit: int = int(os.getenv("DEFAULT_SEARCH_LIMIT", "10"))
+    max_limit: int = int(os.getenv("MAX_SEARCH_LIMIT", "100"))
     
-    # Semantic search settings
-    default_similarity_metric: Literal["cosine", "l2", "inner_product"] = Field(
-        default="cosine",
-        description="Domyślna metryka podobieństwa"
-    )
-    default_limit: int = Field(default=10, description="Domyślny limit wyników")
-    max_limit: int = Field(default=100, description="Maksymalny limit wyników")
+    # Hybrid search
+    default_semantic_weight: float = float(os.getenv("DEFAULT_SEMANTIC_WEIGHT", "0.7"))
     
-    # Hybrid search settings
-    default_semantic_weight: float = Field(
-        default=0.7, 
-        ge=0.0, 
-        le=1.0,
-        description="Domyślna waga wyszukiwania semantycznego w hybrydowym"
-    )
+    # Vector index settings
+    ivfflat_lists: int = int(os.getenv("IVFFLAT_LISTS", "100"))
     
-    # Full-text search settings
-    fulltext_language: str = Field(default="polish", description="Język dla full-text search")
-    min_similarity_score: float = Field(
-        default=0.1,
-        ge=0.0,
-        le=1.0, 
-        description="Minimalny wynik podobieństwa"
-    )
-    
-    # Performance settings
-    use_parallel_search: bool = Field(default=True, description="Czy używać równoległego wyszukiwania")
-    search_timeout: int = Field(default=30, description="Timeout wyszukiwania w sekundach")
+    # Full-text search language
+    fts_language: str = os.getenv("FTS_LANGUAGE", "english")
 
 
-class LoggingSettings(BaseSettings):
-    """Konfiguracja logowania."""
-    
-    model_config = SettingsConfigDict(env_prefix="LOG_")
-    
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO",
-        description="Poziom logowania"
-    )
-    format: str = Field(
-        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        description="Format logów"
-    )
-    file_path: Optional[Path] = Field(default=None, description="Ścieżka do pliku logów")
-    max_file_size: int = Field(default=10485760, description="Maksymalny rozmiar pliku logów (bytes)")
-    backup_count: int = Field(default=5, description="Liczba plików backup")
-    
-    @field_validator("file_path", mode="before")
-    @classmethod
-    def validate_log_file(cls, v: Any) -> Optional[Path]:
-        """Waliduje ścieżkę pliku logów."""
-        if v is None:
-            return None
-        path = Path(v)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-
-class AppSettings(BaseSettings):
+@dataclass
+class AppConfig:
     """Główna konfiguracja aplikacji."""
     
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
-    )
+    # Podstawowe ustawienia
+    debug: bool = os.getenv("DEBUG", "False").lower() == "true"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
     
-    # App metadata
-    app_name: str = Field(default="Semantic Document Search", description="Nazwa aplikacji")
-    app_version: str = Field(default="1.0.0", description="Wersja aplikacji")
-    debug: bool = Field(default=False, description="Tryb debug")
-    
-    # Environment
-    environment: Literal["development", "staging", "production"] = Field(
-        default="development",
-        description="Środowisko aplikacji"
-    )
-    
-    # Sub-settings
-    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
-    search: SearchSettings = Field(default_factory=SearchSettings)
-    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    # Komponenty konfiguracji
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
     
     # CLI settings
-    cli_progress: bool = Field(default=True, description="Czy pokazywać progress bars w CLI")
-    cli_colors: bool = Field(default=True, description="Czy używać kolorów w CLI")
-    export_formats: list[str] = Field(
-        default=["json", "csv"],
-        description="Dostępne formaty eksportu"
+    cli_verbose: bool = False
+    cli_quiet: bool = False
+    
+    # Export settings
+    export_formats: Dict[str, str] = field(default_factory=lambda: {
+        "json": "application/json",
+        "csv": "text/csv",
+        "txt": "text/plain"
+    })
+
+
+# Globalna instancja konfiguracji
+config = AppConfig()
+
+
+# Modele embeddings dostępne w systemie
+AVAILABLE_EMBEDDING_MODELS = {
+    # Sentence Transformers
+    "sentence-transformers": {
+        "all-MiniLM-L6-v2": {
+            "dimension": 384,
+            "description": "Szybki i wydajny model dla języka angielskiego",
+            "multilingual": False
+        },
+        "all-mpnet-base-v2": {
+            "dimension": 768,
+            "description": "Wysokiej jakości model dla języka angielskiego",
+            "multilingual": False
+        },
+        "paraphrase-multilingual-MiniLM-L12-v2": {
+            "dimension": 384,
+            "description": "Wielojęzyczny model (w tym polski)",
+            "multilingual": True
+        },
+        "paraphrase-multilingual-mpnet-base-v2": {
+            "dimension": 768,
+            "description": "Wysokiej jakości wielojęzyczny model",
+            "multilingual": True
+        }
+    },
+    
+    # OpenAI
+    "openai": {
+        "text-embedding-ada-002": {
+            "dimension": 1536,
+            "description": "Starszy model OpenAI (przestarzały)",
+            "multilingual": True
+        },
+        "text-embedding-3-small": {
+            "dimension": 1536,
+            "description": "Nowy wydajny model OpenAI",
+            "multilingual": True
+        },
+        "text-embedding-3-large": {
+            "dimension": 3072,
+            "description": "Najlepszy model OpenAI",
+            "multilingual": True
+        }
+    },
+    
+    # Scikit-learn (dla demonstracji)
+    "sklearn": {
+        "tfidf-vectorizer": {
+            "dimension": 1000,
+            "description": "Prosty model TF-IDF",
+            "multilingual": False
+        }
+    }
+}
+
+
+# Funkcje pomocnicze
+def get_model_info(model_type: str, model_name: str) -> Dict[str, Any]:
+    """Zwraca informacje o modelu embeddings."""
+    return AVAILABLE_EMBEDDING_MODELS.get(model_type, {}).get(model_name, {})
+
+
+def validate_config() -> None:
+    """Waliduje konfigurację aplikacji."""
+    errors: list[str] = []
+    
+    # Sprawdź klucz OpenAI jeśli wymagany
+    if (config.embedding.default_model.startswith("text-embedding") and 
+        not config.embedding.openai_api_key):
+        errors.append("OPENAI_API_KEY is required for OpenAI models")
+    
+    # Sprawdź parametry bazy danych
+    if not config.database.db_host:
+        errors.append("Database host is required")
+    
+    if not config.database.db_name:
+        errors.append("Database name is required")
+    
+    # Sprawdź limity wyszukiwania
+    if config.search.default_limit > config.search.max_limit:
+        errors.append("Default search limit cannot exceed max limit")
+    
+    if errors:
+        raise ValueError(f"Configuration errors: {'; '.join(errors)}")
+
+
+def setup_logging() -> None:
+    """Konfiguruje logowanie aplikacji."""
+    import logging
+    
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    # Poziom logowania
+    level = getattr(logging, config.log_level.upper(), logging.INFO)
+    
+    # Podstawowa konfiguracja
+    logging.basicConfig(
+        level=level,
+        format=log_format,
+        handlers=[
+            logging.StreamHandler(),
+        ]
     )
     
-    # Security settings
-    max_document_size: int = Field(
-        default=10485760, 
-        description="Maksymalny rozmiar dokumentu w bajtach (10MB)"
-    )
-    allowed_file_extensions: list[str] = Field(
-        default=[".txt", ".md", ".pdf", ".docx"],
-        description="Dozwolone rozszerzenia plików"
-    )
-    
-    @field_validator("environment")
-    @classmethod
-    def validate_environment(cls, v: str) -> str:
-        """Waliduje środowisko."""
-        if v not in ["development", "staging", "production"]:
-            raise ValueError("Environment must be one of: development, staging, production")
-        return v
-    
-    def get_database_url(self, async_driver: bool = False) -> str:
-        """Zwraca URL bazy danych."""
-        return self.database.async_url if async_driver else self.database.url
-    
-    def is_development(self) -> bool:
-        """Sprawdza czy jest to środowisko deweloperskie."""
-        return self.environment == "development"
-    
-    def is_production(self) -> bool:
-        """Sprawdza czy jest to środowisko produkcyjne."""
-        return self.environment == "production"
+    # Ustawienia dla zewnętrznych bibliotek
+    if not config.debug:
+        logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+        logging.getLogger("transformers").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.WARNING)
 
 
-# Global settings instance
-settings = AppSettings()
-
-
-def get_settings() -> AppSettings:
-    """Zwraca instancję ustawień aplikacji."""
-    return settings
-
-
-def reload_settings() -> AppSettings:
-    """Przeładowuje ustawienia aplikacji."""
-    global settings
-    settings = AppSettings()
-    return settings
+# Automatyczna walidacja przy imporcie (opcjonalna)
+if __name__ == "__main__":
+    try:
+        validate_config()
+        print("✓ Configuration is valid")
+    except ValueError as e:
+        print(f"✗ Configuration error: {e}")
+        exit(1)

@@ -1,143 +1,191 @@
--- semantic_doc_search/sql/create_tables.sql
--- Definicje tabel dla systemu semantycznego wyszukiwania dokumentów
--- Optymalizowane dla PostgreSQL 17+ z pgvector 0.8.0
+-- Tworzenie tabel dla systemu semantycznego wyszukiwania dokumentów
+-- Uruchom po init_db.sql: psql -U postgres -d semantic_docs -f create_tables.sql
 
--- Usunięcie istniejących tabel (ostrożnie!)
-DROP TABLE IF EXISTS search_history CASCADE;
-DROP TABLE IF EXISTS document_embeddings CASCADE;
-DROP TABLE IF EXISTS embedding_models CASCADE;
-DROP TABLE IF EXISTS documents CASCADE;
-
--- Tabela główna dla dokumentów
-CREATE TABLE documents (
+-- Tabela dokumentów
+CREATE TABLE IF NOT EXISTS documents (
     id SERIAL PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
     content TEXT NOT NULL,
+    source VARCHAR(255),
     metadata JSONB DEFAULT '{}',
-    search_vector TSVECTOR,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     
-    -- Ograniczenia
-    CONSTRAINT documents_title_not_empty CHECK (LENGTH(TRIM(title)) > 0),
-    CONSTRAINT documents_content_not_empty CHECK (LENGTH(TRIM(content)) > 0)
+    -- Indeksy full-text search
+    content_vector tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(content, '')), 'B')
+    ) STORED
 );
 
--- Tabela modeli embeddings (konfiguracja)
-CREATE TABLE embedding_models (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    provider VARCHAR(50) NOT NULL, -- 'sentence-transformers', 'openai', 'sklearn'
-    dimension INTEGER NOT NULL,
-    description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Ograniczenia
-    CONSTRAINT embedding_models_dimension_positive CHECK (dimension > 0),
-    CONSTRAINT embedding_models_provider_valid CHECK (provider IN ('sentence-transformers', 'openai', 'sklearn'))
-);
-
--- Tabela embeddingów wektorowych
-CREATE TABLE document_embeddings (
+-- Tabela embeddings dla semantycznego wyszukiwania
+CREATE TABLE IF NOT EXISTS document_embeddings (
     id SERIAL PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    model_id INTEGER NOT NULL REFERENCES embedding_models(id) ON DELETE CASCADE,
-    embedding vector(384), -- Domyślnie 384 wymiary dla all-MiniLM-L6-v2
+    chunk_index INTEGER DEFAULT 0,
+    chunk_text TEXT NOT NULL,
+    embedding_model VARCHAR(100) NOT NULL DEFAULT 'sentence-transformers',
+    embedding_dimension INTEGER NOT NULL DEFAULT 384,
+    embedding vector, -- Wymiar będzie ustawiony dynamicznie
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     
-    -- Unikalność - jeden embedding na dokument per model
-    CONSTRAINT document_embeddings_unique UNIQUE (document_id, model_id)
+    UNIQUE(document_id, chunk_index, embedding_model)
 );
 
--- Tabela historii wyszukiwań (opcjonalna, dla analiz)
-CREATE TABLE search_history (
+-- Tabela konfiguracji modeli embeddings
+CREATE TABLE IF NOT EXISTS embedding_models (
     id SERIAL PRIMARY KEY,
-    query_text TEXT NOT NULL,
-    search_type VARCHAR(20) NOT NULL, -- 'text', 'semantic', 'hybrid'
-    model_name VARCHAR(100),
-    semantic_weight DECIMAL(3,2),
-    results_count INTEGER NOT NULL DEFAULT 0,
-    execution_time_ms INTEGER,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Ograniczenia
-    CONSTRAINT search_history_type_valid CHECK (search_type IN ('text', 'semantic', 'hybrid')),
-    CONSTRAINT search_history_weight_valid CHECK (semantic_weight IS NULL OR (semantic_weight >= 0 AND semantic_weight <= 1))
+    model_name VARCHAR(100) UNIQUE NOT NULL,
+    model_type VARCHAR(50) NOT NULL, -- 'sentence-transformers', 'openai', 'sklearn'
+    embedding_dimension INTEGER NOT NULL,
+    model_config JSONB DEFAULT '{}',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- === INDEKSY PODSTAWOWE ===
+-- Tabela historii wyszukiwań (opcjonalna)
+CREATE TABLE IF NOT EXISTS search_history (
+    id SERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    search_type VARCHAR(20) NOT NULL, -- 'text', 'semantic', 'hybrid'
+    model_used VARCHAR(100),
+    results_count INTEGER,
+    search_time_ms INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- Indeksy dla tabeli documents
-CREATE INDEX idx_documents_title ON documents USING GIN (to_tsvector('polish', title));
-CREATE INDEX idx_documents_content_gin ON documents USING GIN (search_vector);
-CREATE INDEX idx_documents_metadata ON documents USING GIN (metadata);
-CREATE INDEX idx_documents_created_at ON documents (created_at DESC);
-CREATE INDEX idx_documents_title_trigram ON documents USING GIN (title gin_trgm_ops);
+-- Indeksy dla performance
+CREATE INDEX IF NOT EXISTS idx_documents_title ON documents USING GIN (to_tsvector('english', title));
+CREATE INDEX IF NOT EXISTS idx_documents_content_vector ON documents USING GIN (content_vector);
+CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents (created_at);
+CREATE INDEX IF NOT EXISTS idx_documents_source ON documents (source);
+CREATE INDEX IF NOT EXISTS idx_documents_metadata ON documents USING GIN (metadata);
 
--- Indeksy dla tabeli document_embeddings
-CREATE INDEX idx_embeddings_document_id ON document_embeddings (document_id);
-CREATE INDEX idx_embeddings_model_id ON document_embeddings (model_id);
+-- Indeksy dla embeddings - będą utworzone dynamicznie po dodaniu danych
+-- CREATE INDEX idx_embeddings_vector_l2 ON document_embeddings USING ivfflat (embedding vector_l2_ops) WITH (lists = 100);
+-- CREATE INDEX idx_embeddings_vector_cosine ON document_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- CREATE INDEX idx_embeddings_vector_ip ON document_embeddings USING ivfflat (embedding vector_ip_ops) WITH (lists = 100);
 
--- Indeksy wektorowe - będą tworzone dynamicznie przez funkcje
--- CREATE INDEX idx_embeddings_vector_cosine ON document_embeddings 
---     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_embeddings_document_id ON document_embeddings (document_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_model ON document_embeddings (embedding_model);
 
--- Indeksy dla tabeli search_history
-CREATE INDEX idx_search_history_created_at ON search_history (created_at DESC);
-CREATE INDEX idx_search_history_query_text ON search_history USING GIN (to_tsvector('polish', query_text));
-CREATE INDEX idx_search_history_type ON search_history (search_type);
-
--- === TRIGGERY ===
-
--- Automatyczne generowanie search_vector dla dokumentów
-CREATE OR REPLACE FUNCTION update_document_search_vector()
+-- Trigger do aktualizacji updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.search_vector := to_tsvector('polish', COALESCE(NEW.title, '') || ' ' || COALESCE(NEW.content, ''));
-    NEW.updated_at := CURRENT_TIMESTAMP;
+    NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_documents_updated_at 
+    BEFORE UPDATE ON documents 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Wstawianie domyślnych modeli embeddings
+INSERT INTO embedding_models (model_name, model_type, embedding_dimension, model_config) VALUES
+    ('all-MiniLM-L6-v2', 'sentence-transformers', 384, '{"normalize_embeddings": true}'),
+    ('all-mpnet-base-v2', 'sentence-transformers', 768, '{"normalize_embeddings": true}'),
+    ('text-embedding-ada-002', 'openai', 1536, '{"model": "text-embedding-ada-002"}'),
+    ('text-embedding-3-small', 'openai', 1536, '{"model": "text-embedding-3-small"}'),
+    ('text-embedding-3-large', 'openai', 3072, '{"model": "text-embedding-3-large"}'),
+    ('tfidf-vectorizer', 'sklearn', 1000, '{"max_features": 1000, "ngram_range": [1, 2]}')
+ON CONFLICT (model_name) DO NOTHING;
+
+-- Funkcja do aktualizacji wymiaru embeddings
+CREATE OR REPLACE FUNCTION update_embedding_dimension(table_name TEXT, new_dimension INTEGER)
+RETURNS VOID AS $$
+BEGIN
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN embedding TYPE vector(%s)', table_name, new_dimension);
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trigger_update_document_search_vector
-    BEFORE INSERT OR UPDATE ON documents
-    FOR EACH ROW
-    EXECUTE FUNCTION update_document_search_vector();
+-- Funkcja do tworzenia indeksów wektorowych
+CREATE OR REPLACE FUNCTION create_vector_indexes(
+    table_name TEXT DEFAULT 'document_embeddings',
+    lists_param INTEGER DEFAULT 100
+)
+RETURNS VOID AS $$
+BEGIN
+    -- IVFFlat indeksy dla różnych metryk odległości
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING ivfflat (embedding vector_l2_ops) WITH (lists = %s)', 
+        table_name || '_vector_l2_idx', table_name, lists_param);
+    
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING ivfflat (embedding vector_cosine_ops) WITH (lists = %s)', 
+        table_name || '_vector_cosine_idx', table_name, lists_param);
+    
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING ivfflat (embedding vector_ip_ops) WITH (lists = %s)', 
+        table_name || '_vector_ip_idx', table_name, lists_param);
+    
+    RAISE NOTICE 'Vector indexes created for table %', table_name;
+END;
+$$ LANGUAGE plpgsql;
 
--- === WSTAWIENIE POCZĄTKOWYCH DANYCH ===
+-- Funkcja do hybrydowego wyszukiwania
+CREATE OR REPLACE FUNCTION hybrid_search(
+    query_text TEXT,
+    query_embedding vector,
+    semantic_weight FLOAT DEFAULT 0.5,
+    limit_results INTEGER DEFAULT 10
+)
+RETURNS TABLE (
+    doc_id INTEGER,
+    title VARCHAR(500),
+    content TEXT,
+    source VARCHAR(255),
+    semantic_score FLOAT,
+    text_score FLOAT,
+    combined_score FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH semantic_results AS (
+        SELECT 
+            d.id,
+            d.title,
+            d.content,
+            d.source,
+            1 - (de.embedding <=> query_embedding) AS semantic_score
+        FROM documents d
+        JOIN document_embeddings de ON d.id = de.document_id
+        WHERE de.embedding IS NOT NULL
+        ORDER BY de.embedding <=> query_embedding
+        LIMIT limit_results * 2
+    ),
+    text_results AS (
+        SELECT 
+            d.id,
+            d.title,
+            d.content,
+            d.source,
+            ts_rank_cd(d.content_vector, plainto_tsquery('english', query_text)) AS text_score
+        FROM documents d
+        WHERE d.content_vector @@ plainto_tsquery('english', query_text)
+        ORDER BY ts_rank_cd(d.content_vector, plainto_tsquery('english', query_text)) DESC
+        LIMIT limit_results * 2
+    )
+    SELECT 
+        COALESCE(sr.id, tr.id) AS doc_id,
+        COALESCE(sr.title, tr.title) AS title,
+        COALESCE(sr.content, tr.content) AS content,
+        COALESCE(sr.source, tr.source) AS source,
+        COALESCE(sr.semantic_score, 0.0) AS semantic_score,
+        COALESCE(tr.text_score, 0.0) AS text_score,
+        (COALESCE(sr.semantic_score, 0.0) * semantic_weight + 
+         COALESCE(tr.text_score, 0.0) * (1 - semantic_weight)) AS combined_score
+    FROM semantic_results sr
+    FULL OUTER JOIN text_results tr ON sr.id = tr.id
+    ORDER BY combined_score DESC
+    LIMIT limit_results;
+END;
+$$ LANGUAGE plpgsql;
 
--- Domyślne modele embeddings
-INSERT INTO embedding_models (name, provider, dimension, description) VALUES
-    ('all-MiniLM-L6-v2', 'sentence-transformers', 384, 'Szybki model wielojęzyczny, dobry stosunek jakość/szybkość'),
-    ('all-mpnet-base-v2', 'sentence-transformers', 768, 'Wyższa jakość, wolniejszy od MiniLM'),
-    ('text-embedding-3-small', 'openai', 1536, 'OpenAI model - mały, szybki'),
-    ('text-embedding-3-large', 'openai', 3072, 'OpenAI model - duży, najwyższa jakość'),
-    ('tfidf-sklearn', 'sklearn', 1000, 'Prosty model TF-IDF do testów i demonstracji')
-ON CONFLICT (name) DO NOTHING;
-
--- === UPRAWNIENIA ===
-
--- Przyznanie uprawnień do tabel
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO semantic_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO semantic_app;
-
--- === STATYSTYKI ===
-
--- Analiza tabel dla optymalizacji
-ANALYZE documents;
-ANALYZE document_embeddings;
-ANALYZE embedding_models;
-ANALYZE search_history;
-
--- Wyświetlenie podsumowania utworzonych tabel
+-- Informacja o utworzonych tabelach
 SELECT 
     schemaname,
     tablename,
-    tableowner,
-    tablespace,
     hasindexes,
-    hasrules,
     hastriggers
 FROM pg_tables 
 WHERE schemaname = 'public' 

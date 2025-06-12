@@ -1,53 +1,40 @@
--- semantic_doc_search/sql/init_db.sql
--- Skrypt inicjalizacji bazy danych dla systemu semantycznego wyszukiwania dokumentów
--- Kompatybilny z PostgreSQL 17+ i pgvector 0.8.0
+-- Inicjalizacja bazy danych PostgreSQL z rozszerzeniem pgvector
+-- Uruchom jako superuser: psql -U postgres -f init_db.sql
 
 -- Tworzenie bazy danych
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'semantic_docs') THEN
-        PERFORM dblink_exec('dbname=' || current_database(), 'CREATE DATABASE semantic_docs');
-    END IF;
-END
-$$;
+DROP DATABASE IF EXISTS semantic_docs;
+CREATE DATABASE semantic_docs 
+    WITH 
+    ENCODING = 'UTF8'
+    LC_COLLATE = 'en_US.UTF-8'
+    LC_CTYPE = 'en_US.UTF-8'
+    TEMPLATE = template0;
 
 -- Połączenie z nową bazą danych
 \c semantic_docs;
 
--- Włączenie niezbędnych rozszerzeń
+-- Instalacja rozszerzenia pgvector
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS btree_gin;
-CREATE EXTENSION IF NOT EXISTS unaccent;
 
--- Konfiguracja dla języka polskiego (opcjonalna)
-CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS polish_advanced (COPY = pg_catalog.polish);
-
--- Poprawa konfiguracji wyszukiwania dla języka polskiego
--- ALTER TEXT SEARCH CONFIGURATION polish_advanced
---     ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part
---     WITH unaccent, polish_stem;
-
--- Tworzenie roli dla aplikacji (opcjonalne)
+-- Tworzenie użytkownika aplikacji (opcjonalne)
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'semantic_app') THEN
-        CREATE ROLE semantic_app LOGIN PASSWORD 'semantic_pass';
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'semantic_user') THEN
+        CREATE ROLE semantic_user WITH LOGIN PASSWORD 'semantic_password';
     END IF;
 END
 $$;
 
--- Przyznanie uprawnień
-GRANT CONNECT ON DATABASE semantic_docs TO semantic_app;
-GRANT USAGE ON SCHEMA public TO semantic_app;
-GRANT CREATE ON SCHEMA public TO semantic_app;
+-- Nadanie uprawnień
+GRANT CONNECT ON DATABASE semantic_docs TO semantic_user;
+GRANT USAGE ON SCHEMA public TO semantic_user;
+GRANT CREATE ON SCHEMA public TO semantic_user;
 
--- Pokaż informacje o zainstalowanych rozszerzeniach
-SELECT 
-    name,
-    installed_version,
-    comment
-FROM pg_available_extensions 
-WHERE name IN ('vector', 'pg_trgm', 'btree_gin', 'unaccent')
-    AND installed_version IS NOT NULL
-ORDER BY name;
+-- Informacja o wersji pgvector
+SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
+
+-- Sprawdzenie dostępnych operatorów dla typu vector
+SELECT oprname, oprleft::regtype, oprright::regtype, oprresult::regtype
+FROM pg_operator 
+WHERE oprname IN ('<->', '<=>', '<#>')
+ORDER BY oprname;
