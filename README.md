@@ -1,366 +1,154 @@
-🔍 Semantyczne Wyszukiwanie Dokumentów
-System do semantycznego wyszukiwania i rekomendacji dokumentów z wykorzystaniem PostgreSQL i pgvector. Umożliwia przechowywanie dokumentów tekstowych, generowanie wektorowych reprezentacji ich treści (embeddings) oraz wyszukiwanie podobnych dokumentów na podstawie znaczenia semantycznego.
-
-✨ Funkcjonalności
-📄 Przechowywanie dokumentów tekstowych w bazie PostgreSQL
-
-🧠 Generowanie embeddings dla dokumentów (Sentence Transformers, OpenAI, sklearn)
-
-🔍 Semantyczne wyszukiwanie podobnych dokumentów
-
-🔄 Hybrydowe wyszukiwanie (łączące full-text search z wyszukiwaniem wektorowym)
-
-💡 System rekomendacji podobnych dokumentów
-
-🖥️ Nowoczesny CLI z kolorowym interfejsem
-
-📊 Eksport wyników do JSON/CSV
-
-⚡ Wydajne indeksy wektorowe (IVFFlat, HNSW)
-
-📋 Wymagania
-Python 3.10+
-
-PostgreSQL 17.5+
-
-Rozszerzenie pgvector 0.8.0+
-
-🚀 Instalacja
-1. Instalacja PostgreSQL z rozszerzeniem pgvector
-Ubuntu/Debian
-bash
-# Zainstaluj PostgreSQL
-sudo apt update
-sudo apt install postgresql postgresql-contrib postgresql-server-dev-all
-
-# Zainstaluj pgvector
-git clone https://github.com/pgvector/pgvector.git
-cd pgvector
-make
-sudo make install
-macOS (Homebrew)
-bash
-# Zainstaluj PostgreSQL
-brew install postgresql
-
-# Zainstaluj pgvector
-brew install pgvector
-Windows
-Pobierz PostgreSQL z oficjalnej strony i zainstaluj pgvector zgodnie z instrukcjami.
-
-2. Inicjalizacja bazy danych
-bash
-# Uruchom PostgreSQL
-sudo systemctl start postgresql  # Linux
-brew services start postgresql   # macOS
-
-# Inicjalizuj bazę danych
-psql -U postgres -f sql/init_db.sql
-psql -U postgres -d semantic_docs -f sql/create_tables.sql
-3. Instalacja pakietu Python
-bash
-# Utwórz wirtualne środowisko
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
-
-# Zainstaluj pakiet
-pip install -e .
-
-# Lub zainstaluj wymagania ręcznie
-pip install -r requirements.txt
-4. Konfiguracja
-bash
-# Skopiuj przykładową konfigurację
-cp .env.example .env
-
-# Edytuj konfigurację
-nano .env
-Przykładowa konfiguracja:
-
-text
-DB_NAME=semantic_docs
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_HOST=localhost
-DB_PORT=5432
-
-# Opcjonalnie dla OpenAI
-OPENAI_API_KEY=your_api_key_here
-5. Inicjalizacja systemu
-bash
-# Zainicjalizuj bazę danych i sprawdź status
-semantic-docs init
-semantic-docs status
-🎯 Użycie
-Zarządzanie dokumentami
-Dodawanie dokumentu z treścią
-bash
-semantic-docs docs add \
-  --title "Wprowadzenie do AI" \
-  --content "Sztuczna inteligencja to dziedzina informatyki..." \
-  --embed
-Dodawanie dokumentu z pliku
-bash
-semantic-docs docs add \
-  --title "Raport roczny 2024" \
-  --file "./documents/raport_2024.txt" \
-  --source "Dział finansowy" \
-  --embed \
-  --model all-mpnet-base-v2
-Wyświetlanie dokumentu
-bash
-semantic-docs docs show 1 --show-content --show-embeddings
-Aktualizacja dokumentu
-bash
-semantic-docs docs update 1 \
-  --title "Nowy tytuł" \
-  --regenerate-embeddings
-Usunięcie dokumentu
-bash
-semantic-docs docs delete 1 --force
-Lista dokumentów
-bash
-semantic-docs docs list --limit 20 --format table
-Wyszukiwanie dokumentów
-Wyszukiwanie pełnotekstowe
-bash
-semantic-docs search text "sztuczna inteligencja" --show-content
-Wyszukiwanie semantyczne
-bash
-semantic-docs search semantic \
-  "Jaka jest natura świadomości?" \
-  --model all-mpnet-base-v2 \
-  --show-content
-Wyszukiwanie hybrydowe
-bash
-semantic-docs search hybrid \
-  "machine learning i deep learning" \
-  --semantic-weight 0.7 \
-  --show-content
-Rekomendacje podobnych dokumentów
-bash
-semantic-docs search recommend 1 --limit 5 --show-content
-Eksport wyników
-bash
-# Eksport do JSON
-semantic-docs search semantic "AI ethics" \
-  --export json \
-  --output results.json
-
-# Eksport do CSV
-semantic-docs search hybrid "blockchain technology" \
-  --export csv \
-  --output blockchain_results.csv
-🧠 Modele embeddings
-System obsługuje różne modele do generowania embeddings:
-
-Sentence Transformers (domyślnie)
-bash
-# Szybki model angielski (384 wymiary)
-semantic-docs docs add --title "Document" --content "Content" \
-  --embed --model all-MiniLM-L6-v2
-
-# Wysokiej jakości model angielski (768 wymiarów)
-semantic-docs docs add --title "Document" --content "Content" \
-  --embed --model all-mpnet-base-v2
-
-# Model wielojęzyczny (polski obsługiwany)
-semantic-docs docs add --title "Dokument" --content "Treść po polsku" \
-  --embed --model paraphrase-multilingual-mpnet-base-v2
-OpenAI (wymaga klucza API)
-bash
-semantic-docs docs add --title "Document" --content "Content" \
-  --embed --model text-embedding-3-small
-Scikit-learn (demonstracyjny)
-bash
-semantic-docs docs add --title "Document" --content "Content" \
-  --embed --model tfidf-vectorizer
-📊 Zarządzanie indeksami
-bash
-# Utwórz indeksy wektorowe dla lepszej wydajności
-semantic-docs create-indexes
-
-# Wymuś ponowne utworzenie indeksów
-semantic-docs create-indexes --force
-🔧 Przykłady użycia
-Scenariusz 1: Baza artykułów naukowych
-bash
-# Dodaj artykuły
-semantic-docs docs add \
-  --title "Teoria względności Einsteina" \
-  --file articles/relativity.txt \
-  --source "Physics Journal" \
-  --embed
-
-semantic-docs docs add \
-  --title "Mechanika kwantowa - wprowadzenie" \
-  --file articles/quantum.txt \
-  --source "Science Magazine" \
-  --embed
-
-# Znajdź podobne artykuły
-semantic-docs search semantic \
-  "Związek między grawitacją a mechaniką kwantową" \
-  --show-content \
-  --export json \
-  --output physics_search.json
-Scenariusz 2: Dokumenty firmowe
-bash
-# Dodaj dokumenty
-semantic-docs docs add \
-  --title "Raport finansowy Q3 2024" \
-  --file reports/q3_2024.txt \
-  --source "Dział finansowy" \
-  --metadata '{"quarter": "Q3", "year": 2024, "department": "finance"}' \
-  --embed
-
-semantic-docs docs add \
-  --title "Strategia rozwoju 2025" \
-  --file docs/strategy_2025.txt \
-  --source "Zarząd" \
-  --metadata '{"type": "strategy", "year": 2025}' \
-  --embed
-
-# Wyszukiwanie hybrydowe
-semantic-docs search hybrid \
-  "prognozy finansowe na przyszły rok" \
-  --semantic-weight 0.6 \
-  --show-content
-
-# Eksportuj wyniki strategiczne
-semantic-docs search semantic "cele strategiczne rozwoju" \
-  --export csv \
-  --output strategy_matches.csv
-Scenariusz 3: Dokumentacja techniczna
-bash
-# Dodaj dokumentację
-for file in docs/technical/*.md; do
-  semantic-docs docs add \
-    --title "$(basename "$file" .md)" \
-    --file "$file" \
-    --source "Technical Documentation" \
-    --embed \
-    --model all-mpnet-base-v2
-done
-
-# Znajdź dokumenty podobne do konkretnego
-semantic-docs search recommend 5 --limit 10 --show-content
-📈 Monitorowanie i diagnostyka
-bash
-# Sprawdź status systemu
-semantic-docs status
-
-# Wyświetl historię wyszukiwań
-semantic-docs history --limit 20
-
-# Sprawdź wersję
-semantic-docs version
-⚙️ Konfiguracja zaawansowana
-Dostrajanie wydajności
-text
-# W pliku .env
-EMBEDDING_BATCH_SIZE=64        # Większe batche dla GPU
-DB_MAX_POOL_SIZE=50           # Więcej połączeń dla dużego ruchu
-IVFFLAT_LISTS=200             # Więcej list dla większych zbiorów
-CHUNK_SIZE=1500               # Większe chunki dla długich dokumentów
-Optymalizacja dla dużych zbiorów
-bash
-# Utwórz indeksy z większą liczbą list
-semantic-docs create-indexes --force
-
-# Użyj modeli o wyższej wymiarowości dla lepszej jakości
-semantic-docs docs add --title "..." --content "..." \
-  --embed --model all-mpnet-base-v2  # 768 wymiarów zamiast 384
-🚨 Rozwiązywanie problemów
-Problem: Brak połączenia z bazą danych
-bash
-# Sprawdź status PostgreSQL
-sudo systemctl status postgresql
-
-# Sprawdź konfigurację połączenia
-semantic-docs status
-Problem: Błąd instalacji pgvector
-bash
-# Upewnij się, że masz zainstalowane dev headers
-sudo apt install postgresql-server-dev-all  # Ubuntu/Debian
-Problem: Brak modeli Sentence Transformers
-bash
-# Ręczne pobieranie modeli
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-Problem: Powolne wyszukiwanie
-bash
-# Utwórz indeksy wektorowe
-semantic-docs create-indexes
-
-# Sprawdź statystyki bazy danych
-semantic-docs status --verbose
-🎛️ Parametry CLI
-Globalne opcje
---verbose/-v: Szczegółowe logowanie
-
---quiet/-q: Tylko błędy
-
---config-file: Ścieżka do pliku .env
-
-Zarządzanie dokumentami
-docs add: Dodaj dokument
-
-docs show: Wyświetl dokument
-
-docs update: Aktualizuj dokument
-
-docs delete: Usuń dokument
-
-docs list: Lista dokumentów
-
-Wyszukiwanie
-search text: Wyszukiwanie pełnotekstowe
-
-search semantic: Wyszukiwanie semantyczne
-
-search hybrid: Wyszukiwanie hybrydowe
-
-search recommend: Rekomendacje
-
-Narzędzia
-init: Inicjalizacja systemu
-
-status: Status systemu
-
-create-indexes: Tworzenie indeksów
-
-history: Historia wyszukiwań
-
-version: Informacje o wersji
-
-🛡️ Ograniczenia
-System jest zoptymalizowany dla języka angielskiego (indeksy pełnotekstowe)
-
-Domyślne modele mają ograniczoną długość dokumentów (512 tokenów dla BERT-based)
-
-W przypadku dużych kolekcji dokumentów zalecane jest wykorzystanie modeli o wyższej wymiarowości
-
-OpenAI API ma limity rate-limiting i kosztów
-
-🔗 Linki
-Dokumentacja pgvector
-
-Sentence Transformers
-
-PostgreSQL
-
-OpenAI Embeddings
-
-📄 Licencja
-MIT License - zobacz plik LICENSE dla szczegółów.
-
-🤝 Wkład w projekt
-Chętnie przyjmujemy Pull Requesty! Zobacz CONTRIBUTING.md dla wytycznych.
-
-💬 Wsparcie
-🐛 Zgłoś bug: GitHub Issues
-
-📧 Email: support@example.com
-
-💬 Discord: Link do serwera
+# Semantyczny System Wyszukiwania Dokumentów Naukowych
+
+## 1. Wprowadzenie i Cel Projektu
+
+Celem projektu było stworzenie zaawansowanego systemu do wyszukiwania w korpusie dokumentów naukowych. W odróżnieniu od tradycyjnych wyszukiwarek opartych wyłącznie na słowach kluczowych, głównym założeniem było zaimplementowanie **wyszukiwania semantycznego**. Pozwala ono na odnajdywanie dokumentów na podstawie ich znaczenia i kontekstu, a nie tylko dokładnego dopasowania fraz.
+
+System został zaprojektowany tak, aby odpowiadać na zapytania w języku naturalnym (np. "wpływ zmian klimatu na rolnictwo") i zwracać artykuły, które merytorycznie odpowiadają na to zapytanie, nawet jeśli nie zawierają dokładnie tych samych słów. **Należy podkreślić, że ze względu na użyty model językowy, system działa dla zapytań i dokumentów w języku angielskim.**
+
+## 2. Architektura i Uzasadnienie Wyboru Technologii
+
+System został zbudowany w oparciu o skonteneryzowaną architekturę z wykorzystaniem następujących technologii:
+
+- **Baza Danych: PostgreSQL (wersja 17)**
+  - **Uzasadnienie:** PostgreSQL został wybrany jako fundament systemu ze względu na swoją niezawodność, zgodność ze standardem SQL oraz ogromne możliwości rozbudowy za pomocą rozszerzeń.
+
+- **Wyszukiwanie Wektorowe: Rozszerzenie `pgvector`**
+  - **Uzasadnienie:** `pgvector` to rozszerzenie do PostgreSQL, które dodaje nowy typ danych `VECTOR` oraz możliwość wykonywania ultra-szybkiego wyszukiwania podobieństwa wektorowego (ANN). Zastosowanie `pgvector` było kluczową decyzją architektoniczną, pozwalającą na integrację wyszukiwania semantycznego bezpośrednio z silnikiem bazy danych.
+
+- **Konteneryzacja: Docker i Docker Compose**
+  - **Uzasadnienie:** Cały projekt został zamknięty w kontenerach, aby zapewnić **reprodukowalność** i **izolację środowiska**.
+
+- **Język i Biblioteki: Python 3.13**
+  - **Uzasadnienie:** Python jest standardem w dziedzinie Data Science i NLP.
+    - `sentence-transformers`: Biblioteka do generowania wysokiej jakości **embeddingów** – wektorowych reprezentacji tekstu.
+    - `psycopg`: Nowoczesny, wydajny sterownik do komunikacji z bazą PostgreSQL.
+    - `rich`: Umożliwia tworzenie przyjaznych i czytelnych interfejsów wiersza poleceń (CLI).
+
+## 3. Opis Zbioru Danych (Dataset)
+
+W projekcie wykorzystano publicznie dostępny zbiór danych **Elsevier OA CC-BY Corpus**, dostępny na platformie Hugging Face.
+
+- **Oficjalna strona:** [Elsevier Digital Commons Data](https://elsevier.digitalcommonsdata.com/datasets/zm33cdndxs/3)
+- **Licencja:** CC-BY-4.0
+- **Zawartość:** Zbiór zawiera ponad 40,000 artykułów naukowych z różnych dziedzin. Każdy rekord zawiera m.in. tytuł, abstrakt, pełną treść, słowa kluczowe, obszary tematyczne oraz listę najważniejszych punktów wskazanych przez autorów.
+
+## 4. Instrukcja Uruchomienia i Użycia
+
+#### Wymagania
+- Zainstalowany Docker i Docker Compose.
+
+#### Kroki Uruchomienia
+1. **Klonowanie repozytorium**
+   Sklonuj repozytorium na swój lokalny komputer.
+
+2. **Budowa i uruchomienie kontenerów**
+   W głównym katalogu projektu uruchom polecenie, które zbuduje obrazy i uruchomi kontenery w tle:
+   ```bash
+   docker-compose up -d --build
+   ```
+
+3. **Ładowanie danych do bazy**
+   Po uruchomieniu kontenerów, załaduj dane do bazy. Można ograniczyć liczbę dokumentów za pomocą flagi `--limit` dla celów testowych.
+   ```bash
+   # Załaduj 100 - 1000 dokumentów (rekomendowane do testów - ładowanie pełnego zbioru danych zajmuje wiele godzin)
+   docker-compose exec semantic-cli python scripts/load_elsevier_data.py --limit 100
+
+   # Załaduj 1000 dokumentów
+   docker-compose exec semantic-cli python scripts/load_elsevier_data.py --limit 1000
+   ```
+   *Uwaga: Ładowanie pełnego datasetu może potrwać bardzo długo.*
+
+4. **Testowanie wyszukiwarki**
+   Gdy dane są załadowane, można przetestować działanie systemu.
+
+#### Przykładowe Komendy Użycia
+
+- **Wyświetlenie statystyk bazy danych:**
+  ```bash
+  docker-compose exec semantic-cli python scripts/test_search.py --stats
+  ```
+
+- **Wyszukiwanie semantyczne (domyślne):**
+  ```bash
+  docker-compose exec semantic-cli python scripts/test_search.py --query "impact of artificial intelligence on healthcare"
+  ```
+
+- **Wyszukiwanie pełnotekstowe:**
+    ```bash
+    docker-compose exec semantic-cli python scripts/test_search.py --query "nanoparticles" --type fulltext
+    ```
+
+- **Wyszukiwanie hybrydowe (najlepsze rezultaty):**
+  ```bash
+  docker-compose exec semantic-cli python scripts/test_search.py --query "carbon capture technology" --type hybrid
+  ```
+
+- **Uruchomienie trybu interaktywnego:**
+  ```bash
+  # Flaga -it jest kluczowa dla działania trybu interaktywnego
+  docker-compose exec -it semantic-cli python scripts/test_search.py --interactive
+  ```
+
+## 5. Architektura Bazy Danych
+
+Baza danych została zaprojektowana w sposób znormalizowany, aby efektywnie przechowywać zarówno metadane dokumentów, jak i ich reprezentacje wektorowe.
+
+#### Struktura Projektu
+
+```
+.
+├── docker/                     # Konfiguracja Docker dla PostgreSQL
+│   ├── docker_pg_hba.conf      # Ustawienia uwierzytelniania
+│   └── docker_postgres.conf    # Optymalizacja wydajności PostgreSQL
+├── scripts/                    # Skrypty Python
+│   ├── load_elsevier_data.py   # Skrypt ETL do ładowania danych
+│   └── test_search.py          # Skrypt do testowania wyszukiwania
+├── sql/                        # Skrypty inicjalizacyjne SQL
+│   ├── 00_init_extensions.sql  # Włączenie rozszerzenia 'vector'
+│   ├── 01_create_schema.sql    # Tworzenie schematu 'semantic'
+│   └── 02_create_tables.sql    # Definicje tabel i indeksów
+├── docker-compose.yml          # Plik orkiestracji usług Docker
+├── Dockerfile                  # Definicja kontenera dla aplikacji Python
+└── pyproject.toml              # Zarządzanie zależnościami i konfiguracja projektu
+```
+
+#### Schemat i Tabele (`sql/*.sql`)
+
+- **Schema `semantic`:** Utworzono dedykowaną przestrzeń nazw, aby oddzielić tabele projektu od domyślnego schematu `public`.
+
+- **Tabela `documents`:** Przechowuje metadane każdego artykułu. Zawiera m.in. kolumny `title`, `abstract`, `full_text`, `pub_year`, `keywords` oraz `author_highlights`. Kolumna `doc_id` (DOI) posiada ograniczenie `UNIQUE`, co w połączeniu z klauzulą `ON CONFLICT` w skrypcie ładującym zapobiega tworzeniu duplikatów.
+
+- **Tabela `document_embeddings`:** Przechowuje fragmenty ("chunki") tekstu i odpowiadające im embeddingi. Jest połączona z tabelą `documents` relacją jeden-do-wielu. Kluczowa kolumna to `embedding VECTOR(384)`, która przechowuje wektorową reprezentację znaczenia tekstu.
+
+#### Indeksy i Optymalizacja
+
+Zastosowano trzy kluczowe typy indeksów w pliku `02_create_tables.sql`, aby zapewnić maksymalną wydajność zapytań:
+
+1.  **Indeks B-Tree:** Na kolumnie `doc_id` w tabeli `documents` dla szybkiej obsługi `ON CONFLICT`.
+2.  **Indeks GIN (`fts_idx`):** Na kolumnach `tsvector` do ultra-szybkiego wyszukiwania pełnotekstowego (FTS).
+3.  **Indeks HNSW (`embeddings_embedding_idx`):** Na kolumnie `embedding` do błyskawicznego wyszukiwania wektorowego (ANN). Zastosowano metrykę odległości cosinusowej (`vector_cosine_ops`), która jest standardem w zadaniach NLP.
+
+## 6. Proces Przetwarzania Danych i Wyszukiwania
+
+#### Potok Przetwarzania Danych (`load_elsevier_data.py`)
+
+Skrypt realizuje klasyczny proces ETL (Extract, Transform, Load):
+1.  **Extract:** Pobiera dane z Hugging Face.
+2.  **Transform:** Dla każdego dokumentu dzieli jego treść na mniejsze fragmenty (**chunking**), a następnie generuje dla nich **embeddingi** (reprezentacje wektorowe) za pomocą modelu `all-MiniLM-L6-v2`.
+3.  **Load:** Zapisuje przetworzone dane (metadane i embeddingi) do bazy PostgreSQL.
+
+#### Mechanizmy Wyszukiwania (`test_search.py`)
+
+Skrypt testujący implementuje trzy strategie wyszukiwania:
+1.  **Semantyczne:** Konwertuje zapytanie użytkownika na wektor i szuka w bazie tekstów o najbliższym znaczeniu, używając operatora odległości kosinusowej `<=>` z `pgvector`.
+2.  **Pełnotekstowe:** Wykorzystuje wbudowane w PostgreSQL funkcje FTS do znalezienia dokładnych słów kluczowych.
+3.  **Hybrydowe:** Łączy wyniki z obu powyższych metod, tworząc jeden, trafniejszy ranking.
+
+## 7. Podsumowanie
+
+Projekt z powodzeniem demonstruje, jak można zbudować system do wyszukiwania semantycznego, opierając się na duecie PostgreSQL + pgvector.
+
+---
+*Projekt utworzony na potrzeby zaliczenia przedmiotu "Bazy i Hurtownie Danych" na studiach podyplomowych Data Science.*
+*Dataset Elsevier dostępny na licencji CC BY 4.0.*

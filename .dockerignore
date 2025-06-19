@@ -2,9 +2,9 @@
 # Wyklucza niepotrzebne pliki z kontekstu budowania Docker
 
 # Git
-.git/
+.git
 .gitignore
-.gitattributes
+README.md
 
 # Python
 __pycache__/
@@ -30,57 +30,23 @@ wheels/
 MANIFEST
 
 # Virtual environments
-venv/
+.env
+.venv
 env/
+venv/
 ENV/
 env.bak/
 venv.bak/
-.env
+.venv/
 
-# IDEs i edytory
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
-Thumbs.db
 
-# Pytest
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.cache
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Documentation
-docs/_build/
-site/
-
-# Logi
-*.log
-logs/
-
-# Dane lokalne (nie kopiuj do kontenera)
-data/corpus/
-data/cache/
-*.db
-*.sqlite
-
-# Pliki tymczasowe
-tmp/
-temp/
-*.tmp
-
-# OS specific
+# OS
 .DS_Store
 .DS_Store?
 ._*
@@ -89,17 +55,39 @@ temp/
 ehthumbs.db
 Thumbs.db
 
+# Project specific
+data/
+exports/
+logs/
+*.log
+
 # Docker
 Dockerfile*
-docker-compose*.yml
+docker-compose*
 .dockerignore
 
-# README i dokumentacja (opcjonalnie, jeśli nie potrzebne w kontenerze)
-# README.md
-# docs/
+# Documentation
+*.md
+docs/
 
-# Testy (opcjonalnie, jeśli nie uruchamiasz testów w kontenerze)
-# tests/
+# Tests (if not needed in container)
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
 # Skrypty deweloperskie (zachowaj scripts/ dla load_data.py)
 # scripts/

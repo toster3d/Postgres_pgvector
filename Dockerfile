@@ -1,96 +1,56 @@
-# Poprawiony Dockerfile dla Semantycznego Wyszukiwania Dokumentów
-# Ten Dockerfile naprawia problemy z psycopg_pool i psycopg3
-
-# Multi-stage build dla optymalizacji rozmiaru obrazu
-FROM python:3.11-slim as builder
+FROM python:3.13-slim
 
 # Ustawienie zmiennych środowiskowych
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PATH="/app/.local/bin:$PATH" \
+    PYTHONPATH="/app" \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Instalacja zależności systemowych potrzebnych do budowania
-RUN apt-get update && apt-get install -y \
+# Tworzenie użytkownika non-root
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# Zapewnienie poprawnych uprawnień do katalogu domowego
+RUN mkdir -p /home/appuser/.cache/huggingface && \
+    chown -R appuser:appuser /home/appuser
+
+# Instalacja zależności systemowych w jednej warstwie
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Zależności dla kompilacji Python packages
+    build-essential \
     gcc \
     g++ \
+    # Narzędzia PostgreSQL
+    postgresql-client \
     libpq-dev \
-    postgresql-client \
-    build-essential \
+    # Narzędzia systemowe (minimalne)
     curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Utworzenie katalogu roboczego
-WORKDIR /app
-
-# Kopiowanie plików konfiguracyjnych
-COPY pyproject.toml README.md ./
-
-# Upgrade pip i instalacja build tools
-RUN pip install --upgrade pip setuptools wheel
-
-# Instalacja zależności Python (z psycopg3 i pooling)
-RUN pip install -e .
-
-# === STAGE 2: Runtime ===
-FROM python:3.11-slim as runtime
-
-# Ustawienie zmiennych środowiskowych
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/app/venv/bin:$PATH"
-
-# Instalacja tylko runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libpq5 \
-    postgresql-client \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Utworzenie użytkownika bez uprawnień root
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Ustawienie katalogu roboczego
 WORKDIR /app
 
-# Kopiowanie zainstalowanych pakietów z builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Kopiowanie plików konfiguracyjnych (cache layer optimization)
+COPY pyproject.toml ./
 
-# Kopiowanie kodu aplikacji
-COPY semantic_doc_search/ ./semantic_doc_search/
-COPY tests/ ./tests/
-COPY scripts/ ./scripts/
-COPY pyproject.toml README.md ./
+# Instalacja zależności Python (jako root dla system packages)
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -e .
 
-# Instalacja w trybie edytowalnym (dla development)
-RUN pip install -e .
+# Tworzenie potrzebnych katalogów i ustawienie uprawnień
+RUN mkdir -p /app/data /app/scripts && \
+    chown -R appuser:appuser /app
 
-# Utworzenie potrzebnych katalogów
-RUN mkdir -p /app/data /app/exports /app/logs /app/temp
-
-# Zmiana właściciela plików na appuser
-RUN chown -R appuser:appuser /app
-
-# Przełączenie na użytkownika appuser
+# Przełączenie na użytkownika non-root
 USER appuser
 
-# Test działania instalacji - z poprawką dla psycopg3
-RUN python -c "import semantic_doc_search; print('✅ Package installed successfully')" && \
-    python -c "import psycopg; print('✅ psycopg3 available')" && \
-    python -c "import psycopg_pool; print('✅ psycopg_pool available')" && \
-    python -c "import sentence_transformers; print('✅ sentence_transformers available')"
-
-# Sprawdzenie dostępności CLI
-RUN semantic-docs --help > /dev/null && echo "✅ CLI working"
-
-# Eksponowanie portu (opcjonalne, dla przyszłych rozszerzeń)
-EXPOSE 8000
-
-# Health check
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import semantic_doc_search; print('OK')" || exit 1
+    CMD python -c "import sys; sys.exit(0)" || exit 1
 
-# Entry point
-ENTRYPOINT ["semantic-docs"]
-CMD ["--help"]
+# Domyślna komenda
+CMD ["/bin/bash"]

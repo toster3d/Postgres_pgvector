@@ -1,138 +1,74 @@
-# Poprawiony docker-compose.yml dla Semantycznego Wyszukiwania Dokumentów
-# Ten plik naprawia problemy z psycopg_pool i optymalizuje konfigurację
-
 services:
-  # Serwis PostgreSQL z pgvector
   postgres:
     image: pgvector/pgvector:pg17
-    container_name: semantic_postgres
+    container_name: semantic-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: semantic_docs
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: semantic_password_2024
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     ports:
       - "5432:5432"
     volumes:
+      # Dane PostgreSQL (persistent storage)
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/init_db.sql:/docker-entrypoint-initdb.d/01-init_db.sql:ro
-      - ./sql/create_tables.sql:/docker-entrypoint-initdb.d/02-create_tables.sql:ro
-      - ./sql/sample_data.sql:/docker-entrypoint-initdb.d/03-sample_data.sql:ro
-    networks:
-      - semantic_network
+      # Skrypty inicjalizacyjne SQL
+      - ./sql/00_init_extensions.sql:/docker-entrypoint-initdb.d/00_init_extensions.sql
+      - ./sql/01_create_schema.sql:/docker-entrypoint-initdb.d/01_create_schema.sql
+      - ./sql/02_create_tables.sql:/docker-entrypoint-initdb.d/02_create_tables.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d semantic_docs"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  # Aplikacja Semantic Search
-  semantic-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    container_name: semantic_app
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      # Konfiguracja bazy danych
-      DB_HOST: postgres
-      DB_NAME: semantic_docs
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_PORT: 5432
-      DB_MAX_POOL_SIZE: 20
-      DB_MIN_POOL_SIZE: 5
-      
-      # Konfiguracja embeddings
-      DEFAULT_EMBEDDING_MODEL: all-MiniLM-L6-v2
-      CHUNK_SIZE: 1000
-      CHUNK_OVERLAP: 200
-      MAX_TOKENS_PER_CHUNK: 512
-      
-      # Konfiguracja wyszukiwania
-      DEFAULT_SEMANTIC_WEIGHT: 0.7
-      IVFFLAT_LISTS: 100
-      MAX_SEARCH_RESULTS: 50
-      
-      # Konfiguracja aplikacji
-      LOG_LEVEL: INFO
-      PYTHONPATH: /app
-      
-      # Opcjonalny klucz OpenAI (zakomentowany)
-      # OPENAI_API_KEY: your_openai_key_here
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
-      - ./exports:/app/exports
-      - ./logs:/app/logs
-      - app_temp:/app/temp
-    networks:
-      - semantic_network
-    command: ["--help"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import semantic_doc_search; print('OK')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - semantic-network
 
-  # Opcjonalny serwis Redis dla cache'owania (zakomentowany)
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: semantic_redis
-  #   restart: unless-stopped
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   networks:
-  #     - semantic_network
-  #   command: redis-server --appendonly yes
-
-  # Serwis do ładowania danych (uruchamiany ręcznie)
-  data-loader:
+  # Kontener do uruchamiania skryptów Python
+  semantic-cli:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
-    container_name: semantic_data_loader
+    container_name: semantic-cli
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DB_HOST: postgres
-      DB_NAME: semantic_docs
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_PORT: 5432
-      DEFAULT_EMBEDDING_MODEL: all-MiniLM-L6-v2
+      - DB_HOST=postgres
+      - DB_NAME=semantic_docs
+      - DB_USER=postgres
+      - DB_PASSWORD=semantic_password_2024
+      - DB_PORT=5432
+      # Konfiguracja embeddings
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - EMBEDDING_DIMENSION=384
+      - CHUNK_SIZE=1000
+      - CHUNK_OVERLAP=200
     volumes:
-      - ./data:/app/data
+      # Montowanie lokalnych katalogów do kontenerów
       - ./scripts:/app/scripts
+      # Cache dla Hugging Face datasets (updated path for non-root user)
+      # - huggingface_cache:/home/appuser/.cache/huggingface
+    working_dir: /app
+    # Domyślnie uruchamiamy shell
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     networks:
-      - semantic_network
-    profiles:
-      - tools
-    command: ["python", "/app/scripts/load_data.py", "--help"]
+      - semantic-network
+
+networks:
+  semantic-network:
+    driver: bridge
 
 volumes:
   postgres_data:
     driver: local
-  # redis_data:
-  #   driver: local
-  app_temp:
+  huggingface_cache:
     driver: local
-
-networks:
-  semantic_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

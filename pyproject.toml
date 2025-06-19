@@ -1,116 +1,110 @@
-# Poprawiony plik pyproject.toml dla Semantycznego Wyszukiwania Dokumentów
-# Ten plik naprawia błąd ModuleNotFoundError: No module named 'psycopg_pool'
-
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "semantic-doc-search"
+name = "semantic-document-search"
 version = "1.0.0"
-description = "System do semantycznego wyszukiwania i rekomendacji dokumentów z PostgreSQL i pgvector"
+description = "Semantyczne wyszukiwanie dokumentów naukowych z PostgreSQL i pgvector"
 readme = "README.md"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Student", email = "student@example.com"}
+    {name = "Student", email = "student@example.com"},
 ]
-keywords = ["postgresql", "pgvector", "semantic-search", "embeddings", "nlp"]
+keywords = ["semantic search", "postgresql", "pgvector", "nlp", "embeddings"]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Database",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database",
 ]
-requires-python = ">=3.11"
 
-# KLUCZOWA SEKCJA - Poprawne zależności dla psycopg3 z pooling
+# Główne zależności
 dependencies = [
-    # PostgreSQL adapter z connection pooling
-    "psycopg[binary,pool]>=3.2.0",  # psycopg3 z pooling i optimizations
-    
-    # SQLAlchemy i async postgres adapter
-    "sqlalchemy>=2.0.0",
-    "asyncpg>=0.29.0",  # Async PostgreSQL adapter dla SQLAlchemy
-    "pgvector>=0.2.0",  # Python binding dla pgvector
-    
-    # Embeddings i ML
-    "sentence-transformers>=3.0.0",
-    "scikit-learn>=1.3.0", 
-    "numpy>=1.26.0",
-    "torch>=2.0.0",
-    "openai>=1.0.0",  # OpenAI dla embeddings
-    
-    # CLI i interfejs
+    # Baza danych PostgreSQL
+    "psycopg[binary,pool]>=3.2.0",
+    "pgvector>=0.3.0",
+    # Hugging Face i embeddings
+    "datasets>=2.20.0",
+    "sentence-transformers>=3.1.0",
+    "transformers>=4.44.0",
+    "torch>=2.4.0",
+    # Przetwarzanie tekstu
+    "nltk>=3.8.1",
+    "spacy>=3.7.0",
+    "beautifulsoup4>=4.12.0",
+    # OpenAI (opcjonalne)
+    "openai>=1.40.0",
+    # Narzędzia CLI i interfejs
     "click>=8.1.0",
-    "rich>=13.0.0",
-    "typer>=0.12.0",
-    
-    # Konfiguracja i walidacja
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "python-dotenv>=1.0.0",
-    
-    # Utilities
-    "requests>=2.31.0",
+    "rich>=13.7.0",
     "tqdm>=4.66.0",
-    "python-dateutil>=2.8.0",
+    # Przetwarzanie danych
+    "pandas>=2.2.0",
+    "numpy>=1.24.0",
+    "scikit-learn>=1.5.0",
+    # Konfiguracja
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "python-dotenv>=1.0.0",
+    # Logowanie i debugging
+    "loguru>=0.7.0",
+    # Utilities
+    "uuid>=1.30",
+    "jsonschema>=4.23.0",
 ]
 
+# Opcjonalne zależności
 [project.optional-dependencies]
-# Opcjonalne zależności dla różnych use cases
-openai = [
-    "openai>=1.0.0",
-]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "flake8>=6.0.0",
-    "pre-commit>=3.0.0",
-]
-test = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.11.0",
-    "httpx>=0.24.0",
-]
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.0.0",
-    "mkdocstrings[python]>=0.23.0",
-]
-all = [
-    "semantic-doc-search[openai,dev,test,docs]"
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "black>=24.8.0",
+    "isort>=5.13.0",
+    "mypy>=1.11.0",
+    "pre-commit>=3.8.0",
 ]
 
-[project.scripts]
-semantic-docs = "semantic_doc_search.cli.main:cli"
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.25.0",
+]
+
+performance = [
+    "psutil>=6.0.0",
+    "memory-profiler>=0.61.0",
+]
+
+all = [
+    "semantic-document-search[dev,docs,performance]",
+]
 
 [project.urls]
-Homepage = "https://github.com/username/semantic-doc-search"
-Repository = "https://github.com/username/semantic-doc-search"
-Documentation = "https://semantic-doc-search.readthedocs.io"
-"Bug Tracker" = "https://github.com/username/semantic-doc-search/issues"
+Homepage = "https://github.com/student/semantic-document-search"
+Repository = "https://github.com/student/semantic-document-search"
+Documentation = "https://semantic-document-search.readthedocs.io"
+Issues = "https://github.com/student/semantic-document-search/issues"
 
-# Konfiguracja narzędzi deweloperskich
+# Konfiguracja setuptools
+[tool.setuptools]
+package-dir = {"" = "."}
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["semantic_doc_search*"]
-exclude = ["tests*", "docs*"]
+include = ["scripts*"]
 
-[tool.setuptools.package-data]
-semantic_doc_search = ["sql/*.sql", "config/*.yaml"]
-
+# Konfiguracja Black (formatowanie kodu)
 [tool.black]
 line-length = 88
-target-version = ['py311']
+target-version = ['py311', 'py312', 'py313']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -126,17 +120,16 @@ extend-exclude = '''
 )/
 '''
 
+# Konfiguracja isort (sortowanie importów)
 [tool.isort]
 profile = "black"
 multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
 line_length = 88
+known_first_party = ["scripts"]
 
+# Konfiguracja mypy (sprawdzanie typów)
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -150,24 +143,39 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 
-[tool.pytest.ini_options]
-minversion = "7.0"
-addopts = "-ra -q --strict-markers --strict-config"
-testpaths = ["tests"]
-pythonpath = ["."]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
+[[tool.mypy.overrides]]
+module = [
+    "datasets.*",
+    "sentence_transformers.*",
+    "pgvector.*",
+    "nltk.*",
+    "spacy.*",
 ]
+ignore_missing_imports = true
 
+# Konfiguracja pytest
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=scripts",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Konfiguracja coverage
 [tool.coverage.run]
-source = ["semantic_doc_search"]
+source = ["scripts"]
 omit = [
-    "*/tests/*",
-    "*/migrations/*",
-    "manage.py",
-    "semantic_doc_search/settings/*",
+    "tests/*",
+    "setup.py",
+    "*/site-packages/*",
 ]
 
 [tool.coverage.report]
@@ -177,5 +185,4 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
 ]
